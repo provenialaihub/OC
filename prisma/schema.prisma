@@ -36,37 +36,66 @@ enum AuditActorType {
   system
 }
 
+enum SupplierStatus {
+  active
+  inactive
+  pending_review
+  suspended
+}
+
+enum UnitOfMeasureCategory {
+  count
+  weight
+  volume
+  length
+  package
+}
+
+enum ItemType {
+  ingredient
+  packaging
+  finished_good
+  supply
+  service
+  other
+}
+
 model Organization {
-  id             String                   @id @default(cuid())
-  slug           String                   @unique
-  legalName      String
-  displayName    String
-  status         OrganizationStatus       @default(trial)
-  timezone       String                   @default("America/Chicago")
-  createdAt      DateTime                 @default(now())
-  updatedAt      DateTime                 @updatedAt
-  locations      Location[]
-  memberships    OrganizationMembership[]
-  roles          Role[]
+  id              String                   @id @default(cuid())
+  slug            String                   @unique
+  legalName       String
+  displayName     String
+  status          OrganizationStatus       @default(trial)
+  timezone        String                   @default("America/Chicago")
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  locations       Location[]
+  memberships     OrganizationMembership[]
+  roles           Role[]
   serviceAccounts ServiceAccount[]
-  apiKeys        ApiKey[]
-  auditEvents    AuditEvent[]
+  apiKeys         ApiKey[]
+  auditEvents     AuditEvent[]
+  suppliers       Supplier[]
+  unitsOfMeasure  UnitOfMeasure[]
+  itemCategories  ItemCategory[]
+  items           Item[]
+  itemAliases     ItemAlias[]
 }
 
 model Location {
-  id             String                   @id @default(cuid())
-  organizationId String
-  name           String
-  code           String
-  type           LocationType
-  addressJson    Json?
-  isActive       Boolean                  @default(true)
-  createdAt      DateTime                 @default(now())
-  updatedAt      DateTime                 @updatedAt
-  organization   Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  memberships    OrganizationMembership[]
+  id              String                   @id @default(cuid())
+  organizationId  String
+  name            String
+  code            String
+  type            LocationType
+  addressJson     Json?
+  isActive        Boolean                  @default(true)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  organization    Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships     OrganizationMembership[]
   membershipRoles MembershipRole[]
-  auditEvents    AuditEvent[]
+  auditEvents     AuditEvent[]
 
   @@unique([organizationId, code])
 }
@@ -103,59 +132,59 @@ model OrganizationMembership {
 }
 
 model Role {
-  id              String            @id @default(cuid())
-  organizationId  String?
-  key             String
-  name            String
-  isSystem        Boolean           @default(false)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  organization    Organization?     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  permissions     RolePermission[]
-  memberships     MembershipRole[]
+  id             String           @id @default(cuid())
+  organizationId String?
+  key            String
+  name           String
+  isSystem       Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions    RolePermission[]
+  memberships    MembershipRole[]
 
   @@unique([organizationId, key])
 }
 
 model Permission {
-  id          String            @id @default(cuid())
-  key         String            @unique
+  id          String           @id @default(cuid())
+  key         String           @unique
   description String
   domain      String
   roles       RolePermission[]
 }
 
 model RolePermission {
-  id           String      @id @default(cuid())
+  id           String     @id @default(cuid())
   roleId       String
   permissionId String
-  role         Role        @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission   Permission  @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@unique([roleId, permissionId])
 }
 
 model MembershipRole {
-  id                         String                   @id @default(cuid())
-  organizationMembershipId   String
-  roleId                     String
-  locationId                 String?
-  createdAt                  DateTime                 @default(now())
-  membership                 OrganizationMembership   @relation(fields: [organizationMembershipId], references: [id], onDelete: Cascade)
-  role                       Role                     @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  location                   Location?                @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  id                       String                 @id @default(cuid())
+  organizationMembershipId String
+  roleId                   String
+  locationId               String?
+  createdAt                DateTime               @default(now())
+  membership               OrganizationMembership @relation(fields: [organizationMembershipId], references: [id], onDelete: Cascade)
+  role                     Role                   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  location                 Location?              @relation(fields: [locationId], references: [id], onDelete: SetNull)
 }
 
 model ServiceAccount {
-  id              String        @id @default(cuid())
+  id              String       @id @default(cuid())
   organizationId  String
   name            String
-  status          String        @default("active")
+  status          String       @default("active")
   createdByUserId String
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdByUser   User          @relation("CreatedServiceAccounts", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdByUser   User         @relation("CreatedServiceAccounts", fields: [createdByUserId], references: [id], onDelete: Restrict)
   apiKeys         ApiKey[]
 }
 
@@ -177,25 +206,125 @@ model ApiKey {
 }
 
 model AuditEvent {
-  id            String         @id @default(cuid())
+  id             String         @id @default(cuid())
   organizationId String
-  locationId    String?
-  actorType     AuditActorType
-  actorId       String?
-  actionType    String
-  entityType    String
-  entityId      String
-  beforeJson    Json?
-  afterJson     Json?
-  reasonCode    String?
-  correlationId String?
-  requestId     String?
-  sourceChannel String?
-  occurredAt    DateTime       @default(now())
-  createdAt     DateTime       @default(now())
-  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  location      Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  locationId     String?
+  actorType      AuditActorType
+  actorId        String?
+  actionType     String
+  entityType     String
+  entityId       String
+  beforeJson     Json?
+  afterJson      Json?
+  reasonCode     String?
+  correlationId  String?
+  requestId      String?
+  sourceChannel  String?
+  occurredAt     DateTime       @default(now())
+  createdAt      DateTime       @default(now())
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location       Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, entityType, entityId, occurredAt])
   @@index([organizationId, correlationId])
+}
+
+model Supplier {
+  id                 String         @id @default(cuid())
+  organizationId     String
+  code               String
+  legalName          String
+  displayName        String
+  status             SupplierStatus @default(pending_review)
+  category           String?
+  tags               String[]       @default([])
+  primaryContactJson Json?
+  addressJson        Json?
+  paymentTerms       String?
+  leadTimeDays       Int?
+  notes              String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  organization       Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, code])
+  @@index([organizationId, status])
+}
+
+model UnitOfMeasure {
+  id               String                @id @default(cuid())
+  organizationId   String?
+  code             String
+  name             String
+  category         UnitOfMeasureCategory
+  baseUnitCode     String?
+  conversionToBase Decimal?              @db.Decimal(12, 4)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  organization     Organization?         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items            Item[]                @relation("ItemBaseUnit")
+
+  @@unique([organizationId, code])
+  @@index([organizationId, category])
+}
+
+model ItemCategory {
+  id             String         @id @default(cuid())
+  organizationId String
+  parentId       String?
+  name           String
+  code           String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent         ItemCategory?  @relation("ItemCategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children       ItemCategory[] @relation("ItemCategoryTree")
+  items          Item[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, name])
+}
+
+model Item {
+  id                     String        @id @default(cuid())
+  organizationId         String
+  sku                    String
+  name                   String
+  itemType               ItemType
+  itemCategoryId         String?
+  baseUomId              String
+  trackInventory         Boolean       @default(true)
+  trackLots              Boolean       @default(false)
+  trackExpiration        Boolean       @default(false)
+  isActive               Boolean       @default(true)
+  reorderEnabled         Boolean       @default(false)
+  defaultReorderPoint    Decimal?      @db.Decimal(12, 2)
+  defaultReorderQuantity Decimal?      @db.Decimal(12, 2)
+  notes                  String?
+  metadataJson           Json?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  organization           Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category               ItemCategory? @relation(fields: [itemCategoryId], references: [id], onDelete: SetNull)
+  baseUom                UnitOfMeasure @relation("ItemBaseUnit", fields: [baseUomId], references: [id], onDelete: Restrict)
+  aliases                ItemAlias[]
+
+  @@unique([organizationId, sku])
+  @@index([organizationId, itemType, isActive])
+  @@index([organizationId, itemCategoryId])
+}
+
+model ItemAlias {
+  id             String       @id @default(cuid())
+  organizationId String
+  itemId         String
+  aliasType      String
+  aliasValue     String
+  notes          String?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  item           Item         @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, aliasType, aliasValue])
+  @@index([organizationId, itemId])
 }
