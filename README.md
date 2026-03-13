@@ -25,8 +25,18 @@ Canonical specs live in:
 
 ## Near-term build order
 1. auth + tenancy base
-2. suppliers + item foundation
-3. receiving + inventory truth
-4. purchasing + compliance basics
-5. accounting bridge
-6. production + traceability
+2. database + migrations + seed path
+3. suppliers + item foundation
+4. receiving + inventory truth
+5. purchasing + compliance basics
+6. accounting bridge
+7. production + traceability
+
+## Database commands
+```bash
+cp .env.example .env
+# set DATABASE_URL first
+npm run db:generate
+npm run db:push
+npm run db:seed
+```

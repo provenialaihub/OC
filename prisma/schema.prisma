@@ -1,0 +1,201 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum OrganizationStatus {
+  active
+  suspended
+  trial
+  archived
+}
+
+enum LocationType {
+  warehouse
+  kitchen
+  production
+  retail
+  office
+  virtual
+}
+
+enum MembershipStatus {
+  invited
+  active
+  suspended
+  revoked
+}
+
+enum AuditActorType {
+  user
+  service_account
+  integration
+  system
+}
+
+model Organization {
+  id             String                   @id @default(cuid())
+  slug           String                   @unique
+  legalName      String
+  displayName    String
+  status         OrganizationStatus       @default(trial)
+  timezone       String                   @default("America/Chicago")
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  locations      Location[]
+  memberships    OrganizationMembership[]
+  roles          Role[]
+  serviceAccounts ServiceAccount[]
+  apiKeys        ApiKey[]
+  auditEvents    AuditEvent[]
+}
+
+model Location {
+  id             String                   @id @default(cuid())
+  organizationId String
+  name           String
+  code           String
+  type           LocationType
+  addressJson    Json?
+  isActive       Boolean                  @default(true)
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  organization   Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships    OrganizationMembership[]
+  membershipRoles MembershipRole[]
+  auditEvents    AuditEvent[]
+
+  @@unique([organizationId, code])
+}
+
+model User {
+  id              String                   @id @default(cuid())
+  authProvider    String
+  authSubject     String
+  email           String                   @unique
+  firstName       String?
+  lastName        String?
+  isActive        Boolean                  @default(true)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  memberships     OrganizationMembership[]
+  serviceAccounts ServiceAccount[]         @relation("CreatedServiceAccounts")
+  apiKeys         ApiKey[]
+}
+
+model OrganizationMembership {
+  id                String            @id @default(cuid())
+  organizationId    String
+  userId            String
+  membershipStatus  MembershipStatus  @default(invited)
+  defaultLocationId String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultLocation   Location?         @relation(fields: [defaultLocationId], references: [id], onDelete: SetNull)
+  roleAssignments   MembershipRole[]
+
+  @@unique([organizationId, userId])
+}
+
+model Role {
+  id              String            @id @default(cuid())
+  organizationId  String?
+  key             String
+  name            String
+  isSystem        Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  organization    Organization?     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions     RolePermission[]
+  memberships     MembershipRole[]
+
+  @@unique([organizationId, key])
+}
+
+model Permission {
+  id          String            @id @default(cuid())
+  key         String            @unique
+  description String
+  domain      String
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  id           String      @id @default(cuid())
+  roleId       String
+  permissionId String
+  role         Role        @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission  @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model MembershipRole {
+  id                         String                   @id @default(cuid())
+  organizationMembershipId   String
+  roleId                     String
+  locationId                 String?
+  createdAt                  DateTime                 @default(now())
+  membership                 OrganizationMembership   @relation(fields: [organizationMembershipId], references: [id], onDelete: Cascade)
+  role                       Role                     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  location                   Location?                @relation(fields: [locationId], references: [id], onDelete: SetNull)
+}
+
+model ServiceAccount {
+  id              String        @id @default(cuid())
+  organizationId  String
+  name            String
+  status          String        @default("active")
+  createdByUserId String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdByUser   User          @relation("CreatedServiceAccounts", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  apiKeys         ApiKey[]
+}
+
+model ApiKey {
+  id               String          @id @default(cuid())
+  organizationId   String
+  serviceAccountId String?
+  userId           String?
+  keyPrefix        String
+  keyHash          String
+  scopesJson       Json?
+  lastUsedAt       DateTime?
+  expiresAt        DateTime?
+  revokedAt        DateTime?
+  createdAt        DateTime        @default(now())
+  organization     Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  serviceAccount   ServiceAccount? @relation(fields: [serviceAccountId], references: [id], onDelete: SetNull)
+  user             User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model AuditEvent {
+  id            String         @id @default(cuid())
+  organizationId String
+  locationId    String?
+  actorType     AuditActorType
+  actorId       String?
+  actionType    String
+  entityType    String
+  entityId      String
+  beforeJson    Json?
+  afterJson     Json?
+  reasonCode    String?
+  correlationId String?
+  requestId     String?
+  sourceChannel String?
+  occurredAt    DateTime       @default(now())
+  createdAt     DateTime       @default(now())
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location      Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, entityType, entityId, occurredAt])
+  @@index([organizationId, correlationId])
+}
