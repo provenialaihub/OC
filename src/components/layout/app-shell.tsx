@@ -5,6 +5,7 @@ const nav = [
   ['Dashboard', '/'],
   ['Receiving', '/receiving'],
   ['Inventory', '/inventory'],
+  ['Items', '/items'],
   ['Purchasing', '/purchasing'],
   ['Suppliers', '/suppliers'],
   ['Compliance', '/compliance'],

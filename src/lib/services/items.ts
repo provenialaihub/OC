@@ -63,7 +63,7 @@ export async function listUnitsOfMeasure(organizationId: string) {
     where: {
       OR: [{ organizationId }, { organizationId: null }],
     },
-    orderBy: [{ organizationId: 'desc' }, { name: 'asc' }],
+    orderBy: { name: 'asc' },
   });
 }
 

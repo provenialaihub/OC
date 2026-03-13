@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { useActionState } from 'react';
 import { createItemAction, type CreateItemState } from '../actions';
 
@@ -116,7 +117,7 @@ export function ItemForm({
 const inputClass =
   'w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none';
 
-function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
   return (
     <div className="space-y-1">
       <label htmlFor={htmlFor} className="text-xs uppercase tracking-wide text-slate-400">{label}</label>

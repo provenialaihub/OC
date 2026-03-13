@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { notFound } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
@@ -122,7 +123,7 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
   return (
     <div className="space-y-1">
       <label htmlFor={htmlFor} className="text-xs uppercase tracking-wide text-slate-400">{label}</label>

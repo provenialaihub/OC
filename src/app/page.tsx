@@ -15,8 +15,8 @@ export default function Home() {
           <div className="text-xs uppercase tracking-[0.2em] text-emerald-400">Phase 0 scaffold</div>
           <h2 className="text-3xl font-semibold">Onaply control tower</h2>
           <p className="max-w-3xl text-sm text-slate-400">
-            This is the initial shell for Blue Gourmet&apos;s operator system. The next build steps are supplier foundation,
-            receiving, inventory truth, purchasing, compliance, and the QuickBooks bridge.
+            This is the initial shell for Blue Gourmet&apos;s operator system. Supplier and item foundation are in place;
+            the next build steps are receiving, inventory truth, purchasing, compliance, and the QuickBooks bridge.
           </p>
         </header>
 
