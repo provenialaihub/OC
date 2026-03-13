@@ -23,7 +23,7 @@ export default async function Home() {
           <div className="text-xs uppercase tracking-[0.2em] text-emerald-400">Operator control tower</div>
           <h2 className="text-3xl font-semibold">Onaply control tower</h2>
           <p className="max-w-3xl text-sm text-slate-400">
-            Supplier and item foundations are in place. Receiving now posts audited inventory movements, creates lots for tracked items, and updates current balances with hold/quarantine basics.
+            Supplier and item foundations are in place. Receiving now posts audited inventory movements, creates lots for tracked items, and updates current balances with hold/quarantine basics. Purchasing now surfaces open POs and a PO detail view that routes operators into receiving.
           </p>
         </header>
 
@@ -45,16 +45,17 @@ export default async function Home() {
               <li>• lot + expiration capture for tracked items</li>
               <li>• inventory ledger and balance projection</li>
               <li>• discrepancy + hold/quarantine basics</li>
+              <li>• purchasing overview + PO detail receiving handoff</li>
             </ul>
           </div>
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
             <h3 className="text-lg font-medium">Next likely slices</h3>
             <ol className="mt-4 space-y-2 text-sm text-slate-300">
-              <li>1. PO detail flow and purchasing overview</li>
-              <li>2. lot detail and hold release workflow</li>
-              <li>3. inventory adjustments with reason codes</li>
-              <li>4. compliance issue surfacing beyond receiving exceptions</li>
-              <li>5. accounting event generation for posted receipts</li>
+              <li>1. lot detail and hold release workflow</li>
+              <li>2. inventory adjustments with reason codes</li>
+              <li>3. compliance issue surfacing beyond receiving exceptions</li>
+              <li>4. accounting event generation for posted receipts</li>
+              <li>5. purchasing creation/edit flow beyond read-only oversight</li>
             </ol>
           </div>
         </section>

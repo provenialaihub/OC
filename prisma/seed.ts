@@ -37,6 +37,7 @@ async function main() {
     ['receiving.release_hold', 'Release held inventory', 'receiving'],
     ['inventory.view', 'View inventory', 'inventory'],
     ['inventory.adjust', 'Adjust inventory', 'inventory'],
+    ['purchasing.view', 'View purchase orders', 'purchasing'],
     ['purchasing.create', 'Create purchase orders', 'purchasing'],
     ['compliance.view', 'View compliance items', 'compliance'],
     ['accounting.view', 'View accounting bridge', 'accounting'],

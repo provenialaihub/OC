@@ -33,6 +33,7 @@ type DbModule = typeof import('../src/lib/db/client');
 type SuppliersModule = typeof import('../src/lib/services/suppliers');
 type ItemsModule = typeof import('../src/lib/services/items');
 type ReceivingModule = typeof import('../src/lib/services/receiving');
+type PurchasingModule = typeof import('../src/lib/services/purchasing');
 
 type FixtureContext = {
   organizationId: string;
@@ -53,6 +54,7 @@ let dbModule: DbModule;
 let suppliersModule: SuppliersModule;
 let itemsModule: ItemsModule;
 let receivingModule: ReceivingModule;
+let purchasingModule: PurchasingModule;
 let db: DbModule['db'];
 let fixtures: FixtureContext;
 
@@ -226,6 +228,7 @@ before(async () => {
   suppliersModule = await import('../src/lib/services/suppliers');
   itemsModule = await import('../src/lib/services/items');
   receivingModule = await import('../src/lib/services/receiving');
+  purchasingModule = await import('../src/lib/services/purchasing');
   db = dbModule.db;
 });
 
@@ -471,6 +474,55 @@ describe('Onaply foundation services', () => {
         ],
       }),
       /Expiration date is required/,
+    );
+  });
+
+  test('builds a purchasing overview and PO detail with receiving linkage', async () => {
+    let overview = await purchasingModule.listPurchasingOverview(fixtures.organizationId);
+    assert.equal(overview.summary.activePurchaseOrders, 1);
+    assert.equal(overview.summary.readyToReceiveCount, 1);
+    assert.equal(overview.activePurchaseOrders[0]?.poNumber, 'PO-1001');
+    assert.equal(overview.activePurchaseOrders[0]?.completionPercent, 0);
+    assert.equal(overview.activePurchaseOrders[0]?.nextAction.href, 'receive');
+
+    await receivingModule.createReceiptWithPosting({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-123',
+      locationId: fixtures.locationId,
+      supplierId: fixtures.supplierId,
+      purchaseOrderId: fixtures.purchaseOrderId,
+      receiptMethod: 'truck_delivery',
+      receivedAt: '2026-03-13T18:00:00.000Z',
+      lines: [
+        {
+          itemId: fixtures.lotTrackedItemId,
+          purchaseOrderLineId: fixtures.lotTrackedPoLineId,
+          receivedQuantity: 40,
+          acceptedQuantity: 40,
+          lotCode: 'LOT-PO-PARTIAL-001',
+          expirationDate: '2026-03-20T00:00:00.000Z',
+        },
+      ],
+    });
+
+    overview = await purchasingModule.listPurchasingOverview(fixtures.organizationId);
+    assert.equal(overview.summary.activePurchaseOrders, 1);
+    assert.equal(overview.activePurchaseOrders[0]?.completionPercent, 7);
+    assert.equal(overview.activePurchaseOrders[0]?.receiptCount, 1);
+    assert.equal(overview.activePurchaseOrders[0]?.openLineCount, 2);
+
+    const detail = await purchasingModule.getPurchaseOrderDetail(fixtures.organizationId, fixtures.purchaseOrderId);
+    assert.equal(detail.status, 'partially_received');
+    assert.equal(detail.receipts.length, 1);
+    assert.equal(detail.nextAction.href, 'receive');
+    assert.equal(detail.lines.length, 2);
+    assert.equal(detail.lines[0]?.receipts[0]?.receiptNumber, 'RCV-00001');
+    assert.equal(detail.lines[0]?.remainingQuantity, 40);
+    assert.equal(detail.lines[1]?.remainingQuantity, 500);
+
+    await assert.rejects(
+      purchasingModule.getPurchaseOrderDetail('org-does-not-own-record', fixtures.purchaseOrderId),
+      /Purchase order was not found/,
     );
   });
 });
