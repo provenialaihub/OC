@@ -60,6 +60,87 @@ enum ItemType {
   other
 }
 
+enum PurchaseOrderStatus {
+  draft
+  submitted
+  partially_received
+  received
+  cancelled
+  closed
+}
+
+enum PurchaseOrderLineStatus {
+  open
+  partially_received
+  received
+  cancelled
+}
+
+enum ReceiptMethod {
+  truck_delivery
+  local_pickup
+  transfer
+  ad_hoc
+  return
+}
+
+enum ReceiptStatus {
+  draft
+  received
+  under_review
+  closed
+  cancelled
+}
+
+enum ReceiptDiscrepancyType {
+  short
+  over
+  damaged
+  wrong_item
+  missing_doc
+  other
+}
+
+enum LotStatus {
+  active
+  held
+  quarantined
+  expired
+  consumed
+  archived
+}
+
+enum InventoryMovementType {
+  receive
+  adjust
+  transfer_out
+  transfer_in
+  allocate
+  release_allocation
+  hold
+  release_hold
+  consume
+  produce
+  waste
+  ship
+  return
+  recount_correction
+}
+
+enum InventoryHoldType {
+  quality_hold
+  quarantine
+  expired
+  recall_hold
+  manual_hold
+}
+
+enum InventoryHoldStatus {
+  active
+  released
+  resolved
+}
+
 model Organization {
   id              String                   @id @default(cuid())
   slug            String                   @unique
@@ -80,6 +161,14 @@ model Organization {
   itemCategories  ItemCategory[]
   items           Item[]
   itemAliases     ItemAlias[]
+  purchaseOrders  PurchaseOrder[]
+  purchaseOrderLines PurchaseOrderLine[]
+  receipts        Receipt[]
+  receiptLines    ReceiptLine[]
+  lots            Lot[]
+  inventoryMovements InventoryMovement[]
+  inventoryBalances InventoryBalance[]
+  inventoryHolds  InventoryHold[]
 }
 
 model Location {
@@ -96,6 +185,11 @@ model Location {
   memberships     OrganizationMembership[]
   membershipRoles MembershipRole[]
   auditEvents     AuditEvent[]
+  purchaseOrders  PurchaseOrder[]
+  receipts        Receipt[]
+  inventoryMovements InventoryMovement[]
+  inventoryBalances InventoryBalance[]
+  inventoryHolds  InventoryHold[]
 
   @@unique([organizationId, code])
 }
@@ -246,6 +340,9 @@ model Supplier {
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
   organization       Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  purchaseOrders     PurchaseOrder[]
+  receipts           Receipt[]
+  lots               Lot[]
 
   @@unique([organizationId, code])
   @@index([organizationId, status])
@@ -263,6 +360,9 @@ model UnitOfMeasure {
   updatedAt        DateTime              @updatedAt
   organization     Organization?         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   items            Item[]                @relation("ItemBaseUnit")
+  purchaseOrderLines PurchaseOrderLine[]
+  receiptLines     ReceiptLine[]
+  inventoryMovements InventoryMovement[]
 
   @@unique([organizationId, code])
   @@index([organizationId, category])
@@ -308,6 +408,12 @@ model Item {
   category               ItemCategory? @relation(fields: [itemCategoryId], references: [id], onDelete: SetNull)
   baseUom                UnitOfMeasure @relation("ItemBaseUnit", fields: [baseUomId], references: [id], onDelete: Restrict)
   aliases                ItemAlias[]
+  purchaseOrderLines     PurchaseOrderLine[]
+  receiptLines           ReceiptLine[]
+  lots                   Lot[]
+  inventoryMovements     InventoryMovement[]
+  inventoryBalances      InventoryBalance[]
+  inventoryHolds         InventoryHold[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, itemType, isActive])
@@ -327,4 +433,198 @@ model ItemAlias {
 
   @@unique([organizationId, aliasType, aliasValue])
   @@index([organizationId, itemId])
+}
+
+model PurchaseOrder {
+  id               String              @id @default(cuid())
+  organizationId   String
+  locationId       String
+  supplierId       String
+  poNumber         String
+  status           PurchaseOrderStatus @default(submitted)
+  orderDate        DateTime
+  expectedDate     DateTime?
+  currencyCode     String              @default("USD")
+  notes            String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  organization     Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location         Location            @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  supplier         Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  lines            PurchaseOrderLine[]
+  receipts         Receipt[]
+
+  @@unique([organizationId, poNumber])
+  @@index([organizationId, status, expectedDate])
+}
+
+model PurchaseOrderLine {
+  id                String                  @id @default(cuid())
+  organizationId    String
+  purchaseOrderId   String
+  itemId            String
+  supplierItemCode  String?
+  description       String?
+  orderedQuantity   Decimal                 @db.Decimal(12, 2)
+  receivedQuantity  Decimal                 @default(0) @db.Decimal(12, 2)
+  unitPrice         Decimal?                @db.Decimal(12, 2)
+  uomId             String
+  lineStatus        PurchaseOrderLineStatus @default(open)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  organization      Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  purchaseOrder     PurchaseOrder           @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  item              Item                    @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  uom               UnitOfMeasure           @relation(fields: [uomId], references: [id], onDelete: Restrict)
+  receiptLines      ReceiptLine[]
+
+  @@index([organizationId, purchaseOrderId])
+}
+
+model Receipt {
+  id               String        @id @default(cuid())
+  organizationId   String
+  locationId       String
+  supplierId       String
+  purchaseOrderId  String?
+  receiptNumber    String
+  receiptMethod    ReceiptMethod
+  status           ReceiptStatus @default(received)
+  receivedAt       DateTime
+  notes            String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location         Location      @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  supplier         Supplier      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  purchaseOrder    PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  lines            ReceiptLine[]
+
+  @@unique([organizationId, receiptNumber])
+  @@index([organizationId, status, receivedAt])
+}
+
+model ReceiptLine {
+  id                String                 @id @default(cuid())
+  organizationId    String
+  receiptId         String
+  purchaseOrderLineId String?
+  itemId            String
+  receivedQuantity  Decimal                @db.Decimal(12, 2)
+  acceptedQuantity  Decimal                @db.Decimal(12, 2)
+  rejectedQuantity  Decimal                @default(0) @db.Decimal(12, 2)
+  uomId             String
+  lotCode           String?
+  manufactureDate   DateTime?
+  expirationDate    DateTime?
+  discrepancyType   ReceiptDiscrepancyType?
+  discrepancyNotes  String?
+  holdType          InventoryHoldType?
+  holdReasonCode    String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  organization      Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  receipt           Receipt                @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  purchaseOrderLine PurchaseOrderLine?     @relation(fields: [purchaseOrderLineId], references: [id], onDelete: SetNull)
+  item              Item                   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  uom               UnitOfMeasure          @relation(fields: [uomId], references: [id], onDelete: Restrict)
+  lots              Lot[]
+
+  @@index([organizationId, receiptId])
+}
+
+model Lot {
+  id                String      @id @default(cuid())
+  organizationId    String
+  itemId            String
+  supplierId        String?
+  sourceReceiptLineId String?
+  lotCode           String
+  manufactureDate   DateTime?
+  receivedDate      DateTime?
+  expirationDate    DateTime?
+  status            LotStatus   @default(active)
+  metadataJson      Json?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  item              Item        @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  supplier          Supplier?   @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  sourceReceiptLine ReceiptLine? @relation(fields: [sourceReceiptLineId], references: [id], onDelete: SetNull)
+  inventoryMovements InventoryMovement[]
+  inventoryBalances InventoryBalance[]
+  inventoryHolds    InventoryHold[]
+
+  @@unique([organizationId, itemId, lotCode])
+  @@index([organizationId, expirationDate])
+}
+
+model InventoryMovement {
+  id                  String                @id @default(cuid())
+  organizationId      String
+  locationId          String
+  itemId              String
+  lotId               String?
+  movementType        InventoryMovementType
+  quantityDelta       Decimal               @db.Decimal(12, 2)
+  uomId               String
+  reasonCode          String?
+  sourceReferenceType String
+  sourceReferenceId   String
+  actorType           AuditActorType
+  actorId             String?
+  occurredAt          DateTime
+  correlationId       String?
+  metadataJson        Json?
+  createdAt           DateTime              @default(now())
+  organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location            Location              @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  item                Item                  @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  lot                 Lot?                  @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  uom                 UnitOfMeasure         @relation(fields: [uomId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, itemId, locationId, occurredAt])
+  @@index([organizationId, lotId, occurredAt])
+  @@index([organizationId, correlationId])
+}
+
+model InventoryBalance {
+  id                String      @id @default(cuid())
+  organizationId    String
+  locationId        String
+  itemId            String
+  lotId             String?
+  onHandQuantity    Decimal     @default(0) @db.Decimal(12, 2)
+  availableQuantity Decimal     @default(0) @db.Decimal(12, 2)
+  heldQuantity      Decimal     @default(0) @db.Decimal(12, 2)
+  allocatedQuantity Decimal     @default(0) @db.Decimal(12, 2)
+  lastMovementAt    DateTime?
+  updatedAt         DateTime    @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location          Location     @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  item              Item         @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  lot               Lot?         @relation(fields: [lotId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, locationId, itemId, lotId])
+  @@index([organizationId, locationId])
+}
+
+model InventoryHold {
+  id                String              @id @default(cuid())
+  organizationId    String
+  locationId        String?
+  lotId             String?
+  itemId            String
+  holdType          InventoryHoldType
+  quantity          Decimal?            @db.Decimal(12, 2)
+  reasonCode        String
+  status            InventoryHoldStatus @default(active)
+  createdAt         DateTime            @default(now())
+  releasedAt        DateTime?
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location          Location?           @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  lot               Lot?                @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  item              Item                @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, status, holdType])
 }

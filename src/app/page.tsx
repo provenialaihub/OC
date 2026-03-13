@@ -1,22 +1,28 @@
 import { AppShell } from '@/components/layout/app-shell';
+import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
+import { getInventorySnapshotCounts } from '@/lib/services/inventory';
 
-const cards = [
-  ['Low stock', '0'],
-  ['Receiving tasks', '0'],
-  ['Held lots', '0'],
-  ['Compliance issues', '0'],
-];
+export const dynamic = 'force-dynamic';
 
-export default function Home() {
+export default async function Home() {
+  const ctx = await getTenantContext();
+  const counts = await getInventorySnapshotCounts(ctx.organizationId);
+
+  const cards = [
+    ['Low stock', String(counts.lowStock)],
+    ['Receiving tasks', String(counts.receivingTasks)],
+    ['Held lots', String(counts.heldLots)],
+    ['Receipts in review', String(counts.openIssues)],
+  ] as const;
+
   return (
     <AppShell>
       <div className="space-y-8">
         <header className="space-y-2">
-          <div className="text-xs uppercase tracking-[0.2em] text-emerald-400">Phase 0 scaffold</div>
+          <div className="text-xs uppercase tracking-[0.2em] text-emerald-400">Operator control tower</div>
           <h2 className="text-3xl font-semibold">Onaply control tower</h2>
           <p className="max-w-3xl text-sm text-slate-400">
-            This is the initial shell for Blue Gourmet&apos;s operator system. Supplier and item foundation are in place;
-            the next build steps are receiving, inventory truth, purchasing, compliance, and the QuickBooks bridge.
+            Supplier and item foundations are in place. Receiving now posts audited inventory movements, creates lots for tracked items, and updates current balances with hold/quarantine basics.
           </p>
         </header>
 
@@ -31,22 +37,23 @@ export default function Home() {
 
         <section className="grid gap-6 lg:grid-cols-2">
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-            <h3 className="text-lg font-medium">First operational milestone</h3>
+            <h3 className="text-lg font-medium">Now working</h3>
             <ul className="mt-4 space-y-2 text-sm text-slate-300">
-              <li>• model suppliers and items</li>
-              <li>• receive truck and pickup deliveries with lot/date capture</li>
-              <li>• establish inventory truth by item, lot, and location</li>
-              <li>• surface procurement and compliance exceptions</li>
+              <li>• supplier and item master data</li>
+              <li>• PO-aware and ad hoc receiving</li>
+              <li>• lot + expiration capture for tracked items</li>
+              <li>• inventory ledger and balance projection</li>
+              <li>• discrepancy + hold/quarantine basics</li>
             </ul>
           </div>
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-            <h3 className="text-lg font-medium">Build sequence</h3>
+            <h3 className="text-lg font-medium">Next likely slices</h3>
             <ol className="mt-4 space-y-2 text-sm text-slate-300">
-              <li>1. auth + tenancy base</li>
-              <li>2. supplier and item foundation</li>
-              <li>3. receiving + inventory ledger</li>
-              <li>4. purchasing + compliance basics</li>
-              <li>5. accounting bridge</li>
+              <li>1. PO detail flow and purchasing overview</li>
+              <li>2. lot detail and hold release workflow</li>
+              <li>3. inventory adjustments with reason codes</li>
+              <li>4. compliance issue surfacing beyond receiving exceptions</li>
+              <li>5. accounting event generation for posted receipts</li>
             </ol>
           </div>
         </section>
