@@ -1,11 +1,12 @@
 export const dynamic = 'force-dynamic';
 
 import { AppShell } from '@/components/layout/app-shell';
-import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
+import { PERMISSIONS } from '@/lib/authz/permissions';
+import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
 import { listInventoryBalances } from '@/lib/services/inventory';
 
 export default async function InventoryPage() {
-  const ctx = await getTenantContext();
+  const ctx = await requireTenantAccess(PERMISSIONS.inventoryView);
   const balances = await listInventoryBalances(ctx.organizationId);
 
   return (

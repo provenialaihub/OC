@@ -26,6 +26,8 @@ async function main() {
     },
   });
 
+  const devUserEmail = (process.env.DEV_USER_EMAIL ?? 'operator@bluegourmet.local').trim().toLowerCase();
+
   const permissions = [
     ['supplier.view', 'View suppliers', 'supplier'],
     ['supplier.manage', 'Manage suppliers', 'supplier'],
@@ -47,6 +49,60 @@ async function main() {
       create: { key, description, domain },
     });
   }
+
+  const devUser = await db.user.upsert({
+    where: { email: devUserEmail },
+    update: { isActive: true },
+    create: {
+      email: devUserEmail,
+      authProvider: 'dev',
+      authSubject: devUserEmail,
+      firstName: 'Blue',
+      lastName: 'Operator',
+      isActive: true,
+    },
+  });
+
+  const operatorRole = await db.role.upsert({
+    where: { organizationId_key: { organizationId: org.id, key: 'org_operator' } },
+    update: { name: 'Org Operator' },
+    create: {
+      organizationId: org.id,
+      key: 'org_operator',
+      name: 'Org Operator',
+    },
+  });
+
+  for (const [key] of permissions) {
+    const permission = await db.permission.findUniqueOrThrow({ where: { key } });
+    await db.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: operatorRole.id, permissionId: permission.id } },
+      update: {},
+      create: { roleId: operatorRole.id, permissionId: permission.id },
+    });
+  }
+
+  const membership = await db.organizationMembership.upsert({
+    where: { organizationId_userId: { organizationId: org.id, userId: devUser.id } },
+    update: { membershipStatus: 'active', defaultLocationId: location.id },
+    create: {
+      organizationId: org.id,
+      userId: devUser.id,
+      membershipStatus: 'active',
+      defaultLocationId: location.id,
+    },
+  });
+
+  await db.membershipRole.upsert({
+    where: { id: `${membership.id}-${operatorRole.id}` },
+    update: {},
+    create: {
+      id: `${membership.id}-${operatorRole.id}`,
+      organizationMembershipId: membership.id,
+      roleId: operatorRole.id,
+      locationId: location.id,
+    },
+  });
 
   const units: {
     code: string;

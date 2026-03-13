@@ -2,10 +2,13 @@
 
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
-import { createSupplier, getSupplier, updateSupplier } from '@/lib/services/suppliers';
 import { writeAuditEvent } from '@/lib/audit/write-audit-event';
-import type { SupplierStatus } from '@prisma/client';
+import { PERMISSIONS } from '@/lib/authz/permissions';
+import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
+import { getErrorMessage, NotFoundError } from '@/lib/errors/service-errors';
+import { createSupplier, getSupplier, updateSupplier } from '@/lib/services/suppliers';
+import { fromFormData } from '@/lib/validation/common';
+import { validateCreateSupplierInput, validateUpdateSupplierInput } from '@/lib/validation/suppliers';
 
 export type CreateSupplierState = { error: string | null };
 
@@ -13,31 +16,12 @@ export async function createSupplierAction(
   _prev: CreateSupplierState,
   formData: FormData,
 ): Promise<CreateSupplierState> {
-  const legalName = (formData.get('legalName') as string)?.trim();
-  const displayNameRaw = (formData.get('displayName') as string)?.trim();
-  const displayName = displayNameRaw || legalName;
-  const code = (formData.get('code') as string)?.trim();
-  const category = (formData.get('category') as string)?.trim() || null;
-  const paymentTerms = (formData.get('paymentTerms') as string)?.trim() || null;
-  const leadTimeDaysRaw = (formData.get('leadTimeDays') as string)?.trim();
-  const leadTimeDays = leadTimeDaysRaw ? parseInt(leadTimeDaysRaw, 10) : null;
-  const notes = (formData.get('notes') as string)?.trim() || null;
-
-  if (!legalName) return { error: 'Legal name is required.' };
-  if (!code) return { error: 'Supplier code is required.' };
-
-  let supplierId: string;
   try {
-    const ctx = await getTenantContext();
-    const supplier = await createSupplier(ctx.organizationId, {
-      code,
-      legalName,
-      displayName,
-      category,
-      paymentTerms,
-      leadTimeDays,
-      notes,
-    });
+    const ctx = await requireTenantAccess(PERMISSIONS.supplierManage);
+    const supplier = await createSupplier(
+      ctx.organizationId,
+      validateCreateSupplierInput(fromFormData(formData)),
+    );
 
     await writeAuditEvent({
       organizationId: ctx.organizationId,
@@ -50,26 +34,25 @@ export async function createSupplierAction(
       sourceChannel: 'web',
     });
 
-    supplierId = supplier.id;
+    redirect(`/suppliers/${supplier.id}`);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Failed to create supplier.';
-    return { error: msg };
+    return { error: getErrorMessage(err, 'Failed to create supplier.') };
   }
-
-  redirect(`/suppliers/${supplierId}`);
 }
 
 export async function updateSupplierStatusAction(
   supplierId: string,
   formData: FormData,
 ): Promise<void> {
-  const ctx = await getTenantContext();
-  const status = formData.get('status') as SupplierStatus;
-
+  const ctx = await requireTenantAccess(PERMISSIONS.supplierManage);
   const before = await getSupplier(ctx.organizationId, supplierId);
-  if (!before) return;
+  if (!before) throw new NotFoundError('Supplier was not found for this organization.');
 
-  const updated = await updateSupplier(ctx.organizationId, supplierId, { status });
+  const updated = await updateSupplier(
+    ctx.organizationId,
+    supplierId,
+    validateUpdateSupplierInput({ status: formData.get('status') }),
+  );
 
   await writeAuditEvent({
     organizationId: ctx.organizationId,
@@ -79,7 +62,7 @@ export async function updateSupplierStatusAction(
     entityType: 'supplier',
     entityId: supplierId,
     before: { status: before.status },
-    after: { status: updated?.status },
+    after: { status: updated.status },
     sourceChannel: 'web',
   });
 
@@ -90,13 +73,15 @@ export async function updateSupplierNotesAction(
   supplierId: string,
   formData: FormData,
 ): Promise<void> {
-  const ctx = await getTenantContext();
-  const notes = ((formData.get('notes') as string) ?? '').trim() || null;
-
+  const ctx = await requireTenantAccess(PERMISSIONS.supplierManage);
   const before = await getSupplier(ctx.organizationId, supplierId);
-  if (!before) return;
+  if (!before) throw new NotFoundError('Supplier was not found for this organization.');
 
-  await updateSupplier(ctx.organizationId, supplierId, { notes });
+  const updated = await updateSupplier(
+    ctx.organizationId,
+    supplierId,
+    validateUpdateSupplierInput({ notes: ((formData.get('notes') as string) ?? '').trim() || null }),
+  );
 
   await writeAuditEvent({
     organizationId: ctx.organizationId,
@@ -106,7 +91,7 @@ export async function updateSupplierNotesAction(
     entityType: 'supplier',
     entityId: supplierId,
     before: { notes: before.notes },
-    after: { notes },
+    after: { notes: updated.notes },
     sourceChannel: 'web',
   });
 

@@ -3,7 +3,8 @@ export const dynamic = 'force-dynamic';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
-import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
+import { PERMISSIONS } from '@/lib/authz/permissions';
+import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
 import { getSupplier } from '@/lib/services/suppliers';
 import { updateSupplierStatusAction, updateSupplierNotesAction } from '../actions';
 
@@ -29,7 +30,7 @@ export default async function SupplierDetailPage({
   params: Promise<{ supplierId: string }>;
 }) {
   const { supplierId } = await params;
-  const ctx = await getTenantContext();
+  const ctx = await requireTenantAccess(PERMISSIONS.supplierView);
   const supplier = await getSupplier(ctx.organizationId, supplierId);
   if (!supplier) notFound();
 

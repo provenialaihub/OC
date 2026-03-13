@@ -2,7 +2,8 @@ export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
-import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
+import { PERMISSIONS } from '@/lib/authz/permissions';
+import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
 import { listSuppliers } from '@/lib/services/suppliers';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -20,7 +21,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export default async function SuppliersPage() {
-  const ctx = await getTenantContext();
+  const ctx = await requireTenantAccess(PERMISSIONS.supplierView);
   const suppliers = await listSuppliers(ctx.organizationId);
 
   return (

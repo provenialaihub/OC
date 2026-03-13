@@ -2,7 +2,8 @@ export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
-import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
+import { PERMISSIONS } from '@/lib/authz/permissions';
+import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
 import { listItems } from '@/lib/services/items';
 
 const ITEM_TYPE_LABELS: Record<string, string> = {
@@ -15,7 +16,7 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
 };
 
 export default async function ItemsPage() {
-  const ctx = await getTenantContext();
+  const ctx = await requireTenantAccess(PERMISSIONS.itemView);
   const items = await listItems(ctx.organizationId);
 
   return (

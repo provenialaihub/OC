@@ -1,23 +1,13 @@
+import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db/client';
-import type { SupplierStatus } from '@prisma/client';
+import { ConflictError, NotFoundError } from '@/lib/errors/service-errors';
+import {
+  validateCreateSupplierInput,
+  validateUpdateSupplierInput,
+} from '@/lib/validation/suppliers';
 
-export type CreateSupplierInput = {
-  code: string;
-  legalName: string;
-  displayName: string;
-  category?: string | null;
-  paymentTerms?: string | null;
-  leadTimeDays?: number | null;
-  notes?: string | null;
-};
-
-export type UpdateSupplierInput = {
-  status?: SupplierStatus;
-  notes?: string | null;
-  category?: string | null;
-  paymentTerms?: string | null;
-  leadTimeDays?: number | null;
-};
+export type CreateSupplierInput = ReturnType<typeof validateCreateSupplierInput>;
+export type UpdateSupplierInput = ReturnType<typeof validateUpdateSupplierInput>;
 
 export async function listSuppliers(organizationId: string) {
   return db.supplier.findMany({
@@ -32,34 +22,41 @@ export async function getSupplier(organizationId: string, id: string) {
   });
 }
 
-export async function createSupplier(
-  organizationId: string,
-  input: CreateSupplierInput,
-) {
-  return db.supplier.create({
-    data: {
-      organizationId,
-      code: input.code,
-      legalName: input.legalName,
-      displayName: input.displayName,
-      category: input.category ?? null,
-      paymentTerms: input.paymentTerms ?? null,
-      leadTimeDays: input.leadTimeDays ?? null,
-      notes: input.notes ?? null,
-    },
-  });
+export async function createSupplier(organizationId: string, input: CreateSupplierInput) {
+  const data = validateCreateSupplierInput(input);
+
+  try {
+    return await db.supplier.create({
+      data: {
+        organizationId,
+        code: data.code,
+        legalName: data.legalName,
+        displayName: data.displayName,
+        category: data.category ?? null,
+        paymentTerms: data.paymentTerms ?? null,
+        leadTimeDays: data.leadTimeDays ?? null,
+        notes: data.notes ?? null,
+      },
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new ConflictError(`Supplier code "${data.code}" already exists for this organization.`);
+    }
+    throw error;
+  }
 }
 
-export async function updateSupplier(
-  organizationId: string,
-  id: string,
-  input: UpdateSupplierInput,
-) {
-  // Verify ownership before updating
+export async function updateSupplier(organizationId: string, id: string, input: UpdateSupplierInput) {
+  const data = validateUpdateSupplierInput(input);
+
   const existing = await db.supplier.findFirst({
     where: { id, organizationId },
     select: { id: true },
   });
-  if (!existing) return null;
-  return db.supplier.update({ where: { id }, data: input });
+
+  if (!existing) {
+    throw new NotFoundError('Supplier was not found for this organization.', { supplierId: id });
+  }
+
+  return db.supplier.update({ where: { id }, data });
 }

@@ -1,28 +1,87 @@
+import { headers } from 'next/headers';
 import { db } from '@/lib/db/client';
+import { PermissionDeniedError, UnauthorizedError } from '@/lib/errors/service-errors';
 import type { TenantContext } from '@/lib/tenancy/types';
 
-/**
- * Returns the tenant context for the current request.
- *
- * Production: wire real auth/session here.
- * Development: resolves the org by DEV_ORG_SLUG env var (defaults to 'blue-gourmet').
- * Run `npm run db:seed` first if the dev org is missing.
- */
+async function getRequestIdentity() {
+  const headerStore = await headers();
+  const organizationSlug =
+    headerStore.get('x-onaply-org-slug') ?? process.env.DEV_ORG_SLUG ?? 'blue-gourmet';
+  const userEmail =
+    headerStore.get('x-onaply-user-email') ?? process.env.DEV_USER_EMAIL ?? null;
+
+  return {
+    organizationSlug,
+    userEmail: userEmail?.trim().toLowerCase() || null,
+  };
+}
+
 export async function getTenantContext(): Promise<TenantContext> {
-  if (process.env.NODE_ENV !== 'production') {
-    const slug = process.env.DEV_ORG_SLUG ?? 'blue-gourmet';
-    const org = await db.organization.findUnique({ where: { slug } });
-    if (!org) {
-      throw new Error(
-        `Dev org not found for slug "${slug}". Run: npm run db:seed`,
-      );
-    }
-    return {
-      organizationId: org.id,
-      locationId: null,
-      userId: null,
-    };
+  const { organizationSlug, userEmail } = await getRequestIdentity();
+
+  const organization = await db.organization.findUnique({ where: { slug: organizationSlug } });
+  if (!organization) {
+    throw new UnauthorizedError(
+      `Organization "${organizationSlug}" was not found. Seed the app or provide a valid org slug.`,
+    );
   }
-  // TODO: replace with real auth session extraction
-  throw new Error('getTenantContext: real auth not implemented yet');
+
+  if (!userEmail) {
+    throw new UnauthorizedError(
+      'No user identity was provided. Set DEV_USER_EMAIL locally until real auth is wired.',
+    );
+  }
+
+  const user = await db.user.findUnique({
+    where: { email: userEmail },
+    include: {
+      memberships: {
+        where: {
+          organizationId: organization.id,
+          membershipStatus: 'active',
+        },
+        include: {
+          roleAssignments: {
+            include: {
+              role: {
+                include: {
+                  permissions: {
+                    include: { permission: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!user?.isActive) {
+    throw new UnauthorizedError(`User "${userEmail}" was not found or is inactive.`);
+  }
+
+  const membership = user.memberships[0];
+  if (!membership) {
+    throw new PermissionDeniedError(
+      `User "${userEmail}" does not have an active membership in ${organization.displayName}.`,
+    );
+  }
+
+  const permissions = Array.from(
+    new Set(
+      membership.roleAssignments.flatMap((assignment) =>
+        assignment.role.permissions.map((rolePermission) => rolePermission.permission.key),
+      ),
+    ),
+  );
+
+  return {
+    organizationId: organization.id,
+    organizationSlug: organization.slug,
+    locationId: membership.defaultLocationId,
+    userId: user.id,
+    membershipId: membership.id,
+    permissions,
+  };
 }

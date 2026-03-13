@@ -2,11 +2,12 @@ export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
-import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
+import { PERMISSIONS } from '@/lib/authz/permissions';
+import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
 import { listReceivingQueue } from '@/lib/services/receiving';
 
 export default async function ReceivingPage() {
-  const ctx = await getTenantContext();
+  const ctx = await requireTenantAccess(PERMISSIONS.inventoryView);
   const { expectedPurchaseOrders, openReceipts, recentReceipts } = await listReceivingQueue(ctx.organizationId);
 
   return (

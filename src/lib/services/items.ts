@@ -1,34 +1,14 @@
+import { Prisma } from '@prisma/client';
 import { db } from '@/lib/db/client';
-import type { ItemType } from '@prisma/client';
+import { ConflictError, NotFoundError, ValidationError } from '@/lib/errors/service-errors';
+import {
+  validateCreateItemInput,
+  validateUpdateItemInput,
+  type CreateItemInput,
+  type UpdateItemInput,
+} from '@/lib/validation/items';
 
-export type CreateItemInput = {
-  sku: string;
-  name: string;
-  itemType: ItemType;
-  baseUomId: string;
-  itemCategoryId?: string | null;
-  categoryName?: string | null;
-  categoryCode?: string | null;
-  trackInventory: boolean;
-  trackLots: boolean;
-  trackExpiration: boolean;
-  reorderEnabled: boolean;
-  defaultReorderPoint?: number | null;
-  defaultReorderQuantity?: number | null;
-  notes?: string | null;
-};
-
-export type UpdateItemInput = {
-  itemCategoryId?: string | null;
-  trackInventory: boolean;
-  trackLots: boolean;
-  trackExpiration: boolean;
-  isActive: boolean;
-  reorderEnabled: boolean;
-  defaultReorderPoint?: number | null;
-  defaultReorderQuantity?: number | null;
-  notes?: string | null;
-};
+export type { CreateItemInput, UpdateItemInput };
 
 export async function listItems(organizationId: string) {
   return db.item.findMany({
@@ -68,107 +48,112 @@ export async function listUnitsOfMeasure(organizationId: string) {
 }
 
 export async function createItem(organizationId: string, input: CreateItemInput) {
+  const data = validateCreateItemInput(input);
+
   return db.$transaction(async (tx) => {
     const uom = await tx.unitOfMeasure.findFirst({
       where: {
-        id: input.baseUomId,
+        id: data.baseUomId,
         OR: [{ organizationId }, { organizationId: null }],
       },
     });
 
     if (!uom) {
-      throw new Error('Selected unit of measure is not available for this organization.');
+      throw new ValidationError('Selected unit of measure is not available for this organization.');
     }
 
-    let itemCategoryId = input.itemCategoryId ?? null;
+    let itemCategoryId = data.itemCategoryId ?? null;
 
-    if (!itemCategoryId && input.categoryName && input.categoryCode) {
+    if (!itemCategoryId && data.categoryName && data.categoryCode) {
       const category = await tx.itemCategory.upsert({
         where: {
           organizationId_code: {
             organizationId,
-            code: input.categoryCode,
+            code: data.categoryCode,
           },
         },
-        update: {
-          name: input.categoryName,
-        },
+        update: { name: data.categoryName },
         create: {
           organizationId,
-          name: input.categoryName,
-          code: input.categoryCode,
+          name: data.categoryName,
+          code: data.categoryCode,
         },
       });
       itemCategoryId = category.id;
     }
 
     if (itemCategoryId) {
-      const category = await tx.itemCategory.findFirst({
-        where: { id: itemCategoryId, organizationId },
-      });
+      const category = await tx.itemCategory.findFirst({ where: { id: itemCategoryId, organizationId } });
       if (!category) {
-        throw new Error('Selected item category was not found for this organization.');
+        throw new NotFoundError('Selected item category was not found for this organization.');
       }
     }
 
-    return tx.item.create({
-      data: {
-        organizationId,
-        sku: input.sku,
-        name: input.name,
-        itemType: input.itemType,
-        itemCategoryId,
-        baseUomId: input.baseUomId,
-        trackInventory: input.trackInventory,
-        trackLots: input.trackLots,
-        trackExpiration: input.trackExpiration,
-        reorderEnabled: input.reorderEnabled,
-        defaultReorderPoint: input.defaultReorderPoint ?? null,
-        defaultReorderQuantity: input.defaultReorderQuantity ?? null,
-        notes: input.notes ?? null,
-      },
-      include: {
-        category: true,
-        baseUom: true,
-      },
-    });
+    try {
+      return await tx.item.create({
+        data: {
+          organizationId,
+          sku: data.sku,
+          name: data.name,
+          itemType: data.itemType,
+          itemCategoryId,
+          baseUomId: data.baseUomId,
+          trackInventory: data.trackInventory,
+          trackLots: data.trackLots,
+          trackExpiration: data.trackExpiration,
+          reorderEnabled: data.reorderEnabled,
+          defaultReorderPoint: data.defaultReorderPoint ?? null,
+          defaultReorderQuantity: data.defaultReorderQuantity ?? null,
+          notes: data.notes ?? null,
+        },
+        include: {
+          category: true,
+          baseUom: true,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictError(`SKU "${data.sku}" already exists for this organization.`);
+      }
+      throw error;
+    }
   });
 }
 
-export async function updateItem(
-  organizationId: string,
-  id: string,
-  input: UpdateItemInput,
-) {
+export async function updateItem(organizationId: string, id: string, input: UpdateItemInput) {
+  const data = validateUpdateItemInput(input);
+
   const existing = await db.item.findFirst({
     where: { id, organizationId },
     select: { id: true },
   });
 
-  if (!existing) return null;
+  if (!existing) {
+    throw new NotFoundError('Item was not found for this organization.', { itemId: id });
+  }
 
-  if (input.itemCategoryId) {
+  if (data.itemCategoryId) {
     const category = await db.itemCategory.findFirst({
-      where: { id: input.itemCategoryId, organizationId },
+      where: { id: data.itemCategoryId, organizationId },
       select: { id: true },
     });
     if (!category) {
-      throw new Error('Selected item category was not found for this organization.');
+      throw new NotFoundError('Selected item category was not found for this organization.');
     }
   }
 
   return db.item.update({
     where: { id },
     data: {
-      itemCategoryId: input.itemCategoryId ?? null,
-      trackInventory: input.trackInventory,
-      trackLots: input.trackLots,
-      trackExpiration: input.trackExpiration,
-      isActive: input.isActive,
-      reorderEnabled: input.reorderEnabled,
-      defaultReorderPoint: input.defaultReorderPoint ?? null,
-      defaultReorderQuantity: input.defaultReorderQuantity ?? null,
-      notes: input.notes ?? null,
+      itemCategoryId: data.itemCategoryId ?? null,
+      trackInventory: data.trackInventory,
+      trackLots: data.trackLots,
+      trackExpiration: data.trackExpiration,
+      isActive: data.isActive,
+      reorderEnabled: data.reorderEnabled,
+      defaultReorderPoint: data.defaultReorderPoint ?? null,
+      defaultReorderQuantity: data.defaultReorderQuantity ?? null,
+      notes: data.notes ?? null,
     },
     include: {
       category: true,

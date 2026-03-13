@@ -1,32 +1,11 @@
-import { Prisma, type InventoryHoldType, type ReceiptMethod, type ReceiptStatus } from '@prisma/client';
+import { Prisma, type InventoryHoldType, type ReceiptStatus } from '@prisma/client';
 import { db } from '@/lib/db/client';
+import { NotFoundError, ValidationError } from '@/lib/errors/service-errors';
+import { validateCreateReceiptInput } from '@/lib/validation/receiving';
 
-type ReceiveLineInput = {
-  itemId: string;
-  purchaseOrderLineId?: string | null;
-  receivedQuantity: number;
-  acceptedQuantity: number;
-  rejectedQuantity?: number;
-  lotCode?: string | null;
-  manufactureDate?: string | null;
-  expirationDate?: string | null;
-  discrepancyType?: 'short' | 'over' | 'damaged' | 'wrong_item' | 'missing_doc' | 'other' | null;
-  discrepancyNotes?: string | null;
-  holdType?: InventoryHoldType | null;
-  holdReasonCode?: string | null;
-};
+export type CreateReceiptInput = ReturnType<typeof validateCreateReceiptInput>;
 
-type CreateReceiptInput = {
-  organizationId: string;
-  actorId?: string | null;
-  locationId: string;
-  supplierId: string;
-  purchaseOrderId?: string | null;
-  receiptMethod: ReceiptMethod;
-  receivedAt: string;
-  notes?: string | null;
-  lines: ReceiveLineInput[];
-};
+type ValidatedCreateReceiptInput = CreateReceiptInput;
 
 function decimal(value: number) {
   return new Prisma.Decimal(value.toFixed(2));
@@ -42,15 +21,18 @@ function nextPoLineStatus(ordered: Prisma.Decimal, received: Prisma.Decimal) {
   return 'open' as const;
 }
 
-async function applyBalanceMovement(tx: Prisma.TransactionClient, args: {
-  organizationId: string;
-  locationId: string;
-  itemId: string;
-  lotId?: string | null;
-  occurredAt: Date;
-  movementType: 'receive' | 'hold';
-  quantity: Prisma.Decimal;
-}) {
+async function applyBalanceMovement(
+  tx: Prisma.TransactionClient,
+  args: {
+    organizationId: string;
+    locationId: string;
+    itemId: string;
+    lotId?: string | null;
+    occurredAt: Date;
+    movementType: 'receive' | 'hold';
+    quantity: Prisma.Decimal;
+  },
+) {
   const existing = await tx.inventoryBalance.findFirst({
     where: {
       organizationId: args.organizationId,
@@ -60,19 +42,21 @@ async function applyBalanceMovement(tx: Prisma.TransactionClient, args: {
     },
   });
 
-  const current = existing ?? await tx.inventoryBalance.create({
-    data: {
-      organizationId: args.organizationId,
-      locationId: args.locationId,
-      itemId: args.itemId,
-      lotId: args.lotId ?? null,
-      onHandQuantity: decimal(0),
-      availableQuantity: decimal(0),
-      heldQuantity: decimal(0),
-      allocatedQuantity: decimal(0),
-      lastMovementAt: args.occurredAt,
-    },
-  });
+  const current =
+    existing ??
+    (await tx.inventoryBalance.create({
+      data: {
+        organizationId: args.organizationId,
+        locationId: args.locationId,
+        itemId: args.itemId,
+        lotId: args.lotId ?? null,
+        onHandQuantity: decimal(0),
+        availableQuantity: decimal(0),
+        heldQuantity: decimal(0),
+        allocatedQuantity: decimal(0),
+        lastMovementAt: args.occurredAt,
+      },
+    }));
 
   let onHand = new Prisma.Decimal(current.onHandQuantity);
   let available = new Prisma.Decimal(current.availableQuantity);
@@ -81,7 +65,7 @@ async function applyBalanceMovement(tx: Prisma.TransactionClient, args: {
   if (args.movementType === 'receive') {
     onHand = onHand.plus(args.quantity);
     available = available.plus(args.quantity);
-  } else if (args.movementType === 'hold') {
+  } else {
     available = available.minus(args.quantity);
     held = held.plus(args.quantity);
   }
@@ -167,91 +151,90 @@ export async function getReceivingFormOptions(organizationId: string) {
   return { locations, suppliers, items, purchaseOrders };
 }
 
-export async function createReceiptWithPosting(input: CreateReceiptInput) {
-  if (!input.lines.length) {
-    throw new Error('At least one receipt line is required.');
-  }
+export async function createReceiptWithPosting(input: ValidatedCreateReceiptInput) {
+  const data = validateCreateReceiptInput(input);
 
-  const receivedAt = new Date(input.receivedAt);
+  const receivedAt = new Date(data.receivedAt);
   if (Number.isNaN(receivedAt.getTime())) {
-    throw new Error('Received at is invalid.');
+    throw new ValidationError('Received at is invalid.');
   }
 
   return db.$transaction(async (tx) => {
     const [location, supplier, purchaseOrder] = await Promise.all([
-      tx.location.findFirst({ where: { id: input.locationId, organizationId: input.organizationId } }),
-      tx.supplier.findFirst({ where: { id: input.supplierId, organizationId: input.organizationId } }),
-      input.purchaseOrderId
+      tx.location.findFirst({ where: { id: data.locationId, organizationId: data.organizationId } }),
+      tx.supplier.findFirst({ where: { id: data.supplierId, organizationId: data.organizationId } }),
+      data.purchaseOrderId
         ? tx.purchaseOrder.findFirst({
-            where: { id: input.purchaseOrderId, organizationId: input.organizationId },
+            where: { id: data.purchaseOrderId, organizationId: data.organizationId },
             include: { lines: true },
           })
         : Promise.resolve(null),
     ]);
 
-    if (!location) throw new Error('Location not found for this organization.');
-    if (!supplier) throw new Error('Supplier not found for this organization.');
-    if (input.purchaseOrderId && !purchaseOrder) throw new Error('Purchase order not found for this organization.');
+    if (!location) throw new NotFoundError('Location not found for this organization.');
+    if (!supplier) throw new NotFoundError('Supplier not found for this organization.');
+    if (data.purchaseOrderId && !purchaseOrder) {
+      throw new NotFoundError('Purchase order not found for this organization.');
+    }
 
-    const itemIds = [...new Set(input.lines.map((line) => line.itemId))];
+    const itemIds = [...new Set(data.lines.map((line) => line.itemId))];
     const items = await tx.item.findMany({
-      where: { organizationId: input.organizationId, id: { in: itemIds } },
+      where: { organizationId: data.organizationId, id: { in: itemIds } },
       include: { baseUom: true },
     });
     const itemMap = new Map(items.map((item) => [item.id, item]));
+    const itemUomMap = new Map(items.map((item) => [item.id, item.baseUomId]));
 
-    const receiptCount = await tx.receipt.count({ where: { organizationId: input.organizationId } });
+    const receiptCount = await tx.receipt.count({ where: { organizationId: data.organizationId } });
     const receiptNumber = `RCV-${String(receiptCount + 1).padStart(5, '0')}`;
     const correlationId = `receipt:${receiptNumber}`;
 
     let status: ReceiptStatus = 'received';
-    if (input.lines.some((line) => line.discrepancyType || line.holdType)) {
+    if (data.lines.some((line) => line.discrepancyType || line.holdType)) {
       status = 'under_review';
     }
 
     const receipt = await tx.receipt.create({
       data: {
-        organizationId: input.organizationId,
-        locationId: input.locationId,
-        supplierId: input.supplierId,
-        purchaseOrderId: input.purchaseOrderId ?? null,
+        organizationId: data.organizationId,
+        locationId: data.locationId,
+        supplierId: data.supplierId,
+        purchaseOrderId: data.purchaseOrderId ?? null,
         receiptNumber,
-        receiptMethod: input.receiptMethod,
+        receiptMethod: data.receiptMethod,
         status,
         receivedAt,
-        notes: input.notes ?? null,
+        notes: data.notes ?? null,
       },
     });
 
-    const createdLines = [] as Array<{ id: string; itemId: string; acceptedQuantity: Prisma.Decimal; holdType: InventoryHoldType | null; holdReasonCode: string | null; lotId: string | null; }>;
+    const createdLines: Array<{
+      id: string;
+      itemId: string;
+      acceptedQuantity: Prisma.Decimal;
+      holdType: InventoryHoldType | null;
+      holdReasonCode: string | null;
+      lotId: string | null;
+    }> = [];
 
-    for (const line of input.lines) {
+    for (const line of data.lines) {
       const item = itemMap.get(line.itemId);
-      if (!item) throw new Error('A receipt line item was not found for this organization.');
+      if (!item) throw new NotFoundError('A receipt line item was not found for this organization.');
 
       const receivedQty = decimal(line.receivedQuantity);
       const acceptedQty = decimal(line.acceptedQuantity);
       const rejectedQty = decimal(line.rejectedQuantity ?? Math.max(line.receivedQuantity - line.acceptedQuantity, 0));
 
-      if (receivedQty.lt(0) || acceptedQty.lt(0) || rejectedQty.lt(0)) {
-        throw new Error('Receipt quantities cannot be negative.');
-      }
-      if (!receivedQty.eq(acceptedQty.plus(rejectedQty))) {
-        throw new Error(`Received quantity must equal accepted + rejected for ${item.name}.`);
-      }
       if (item.trackLots && !line.lotCode?.trim()) {
-        throw new Error(`Lot code is required for lot-tracked item ${item.name}.`);
+        throw new ValidationError(`Lot code is required for lot-tracked item ${item.name}.`);
       }
       if (item.trackExpiration && !line.expirationDate) {
-        throw new Error(`Expiration date is required for expiration-tracked item ${item.name}.`);
-      }
-      if (line.holdType && !line.holdReasonCode?.trim()) {
-        throw new Error(`Hold reason is required when placing ${item.name} on hold.`);
+        throw new ValidationError(`Expiration date is required for expiration-tracked item ${item.name}.`);
       }
 
       const receiptLine = await tx.receiptLine.create({
         data: {
-          organizationId: input.organizationId,
+          organizationId: data.organizationId,
           receiptId: receipt.id,
           purchaseOrderLineId: line.purchaseOrderLineId ?? null,
           itemId: line.itemId,
@@ -274,7 +257,7 @@ export async function createReceiptWithPosting(input: CreateReceiptInput) {
         const lot = await tx.lot.upsert({
           where: {
             organizationId_itemId_lotCode: {
-              organizationId: input.organizationId,
+              organizationId: data.organizationId,
               itemId: item.id,
               lotCode: line.lotCode!.trim(),
             },
@@ -288,7 +271,7 @@ export async function createReceiptWithPosting(input: CreateReceiptInput) {
             status: line.holdType === 'quarantine' ? 'quarantined' : line.holdType ? 'held' : 'active',
           },
           create: {
-            organizationId: input.organizationId,
+            organizationId: data.organizationId,
             itemId: item.id,
             supplierId: supplier.id,
             sourceReceiptLineId: receiptLine.id,
@@ -305,8 +288,8 @@ export async function createReceiptWithPosting(input: CreateReceiptInput) {
       if (acceptedQty.gt(0) && item.trackInventory) {
         await tx.inventoryMovement.create({
           data: {
-            organizationId: input.organizationId,
-            locationId: input.locationId,
+            organizationId: data.organizationId,
+            locationId: data.locationId,
             itemId: item.id,
             lotId,
             movementType: 'receive',
@@ -316,7 +299,7 @@ export async function createReceiptWithPosting(input: CreateReceiptInput) {
             sourceReferenceType: 'receipt_line',
             sourceReferenceId: receiptLine.id,
             actorType: 'user',
-            actorId: input.actorId ?? null,
+            actorId: data.actorId ?? null,
             occurredAt: receivedAt,
             correlationId,
             metadataJson: {
@@ -328,8 +311,8 @@ export async function createReceiptWithPosting(input: CreateReceiptInput) {
         });
 
         await applyBalanceMovement(tx, {
-          organizationId: input.organizationId,
-          locationId: input.locationId,
+          organizationId: data.organizationId,
+          locationId: data.locationId,
           itemId: item.id,
           lotId,
           occurredAt: receivedAt,
@@ -379,8 +362,8 @@ export async function createReceiptWithPosting(input: CreateReceiptInput) {
 
       await tx.inventoryHold.create({
         data: {
-          organizationId: input.organizationId,
-          locationId: input.locationId,
+          organizationId: data.organizationId,
+          locationId: data.locationId,
           lotId: line.lotId,
           itemId: line.itemId,
           holdType: line.holdType,
@@ -391,18 +374,18 @@ export async function createReceiptWithPosting(input: CreateReceiptInput) {
 
       await tx.inventoryMovement.create({
         data: {
-          organizationId: input.organizationId,
-          locationId: input.locationId,
+          organizationId: data.organizationId,
+          locationId: data.locationId,
           itemId: line.itemId,
           lotId: line.lotId,
           movementType: 'hold',
           quantityDelta: decimal(0),
-          uomId: (await tx.item.findUniqueOrThrow({ where: { id: line.itemId } })).baseUomId,
+          uomId: itemUomMap.get(line.itemId)!,
           reasonCode: line.holdReasonCode ?? 'inspection_required',
           sourceReferenceType: 'receipt_line',
           sourceReferenceId: line.id,
           actorType: 'user',
-          actorId: input.actorId ?? null,
+          actorId: data.actorId ?? null,
           occurredAt: receivedAt,
           correlationId,
           metadataJson: { holdType: line.holdType },
@@ -410,8 +393,8 @@ export async function createReceiptWithPosting(input: CreateReceiptInput) {
       });
 
       await applyBalanceMovement(tx, {
-        organizationId: input.organizationId,
-        locationId: input.locationId,
+        organizationId: data.organizationId,
+        locationId: data.locationId,
         itemId: line.itemId,
         lotId: line.lotId,
         occurredAt: receivedAt,
@@ -423,10 +406,10 @@ export async function createReceiptWithPosting(input: CreateReceiptInput) {
     await tx.auditEvent.createMany({
       data: [
         {
-          organizationId: input.organizationId,
-          locationId: input.locationId,
+          organizationId: data.organizationId,
+          locationId: data.locationId,
           actorType: 'user',
-          actorId: input.actorId ?? null,
+          actorId: data.actorId ?? null,
           actionType: 'receipt.posted',
           entityType: 'receipt',
           entityId: receipt.id,
@@ -438,10 +421,10 @@ export async function createReceiptWithPosting(input: CreateReceiptInput) {
         ...createdLines
           .filter((line) => Boolean(line.holdType))
           .map((line) => ({
-            organizationId: input.organizationId,
-            locationId: input.locationId,
+            organizationId: data.organizationId,
+            locationId: data.locationId,
             actorType: 'user' as const,
-            actorId: input.actorId ?? null,
+            actorId: data.actorId ?? null,
             actionType: 'inventory.hold.created',
             entityType: 'receipt_line',
             entityId: line.id,

@@ -1,11 +1,12 @@
 import { AppShell } from '@/components/layout/app-shell';
-import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
+import { PERMISSIONS } from '@/lib/authz/permissions';
+import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
 import { getInventorySnapshotCounts } from '@/lib/services/inventory';
 
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
-  const ctx = await getTenantContext();
+  const ctx = await requireTenantAccess(PERMISSIONS.inventoryView);
   const counts = await getInventorySnapshotCounts(ctx.organizationId);
 
   const cards = [

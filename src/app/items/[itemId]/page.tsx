@@ -2,7 +2,8 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { notFound } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
-import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
+import { PERMISSIONS } from '@/lib/authz/permissions';
+import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
 import { getItem, listItemCategories } from '@/lib/services/items';
 import { updateItemAction } from '../actions';
 
@@ -21,7 +22,7 @@ export default async function ItemDetailPage({
   params: Promise<{ itemId: string }>;
 }) {
   const { itemId } = await params;
-  const ctx = await getTenantContext();
+  const ctx = await requireTenantAccess(PERMISSIONS.itemView);
   const [item, categories] = await Promise.all([
     getItem(ctx.organizationId, itemId),
     listItemCategories(ctx.organizationId),

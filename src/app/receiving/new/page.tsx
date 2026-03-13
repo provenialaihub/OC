@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic';
 
 import { AppShell } from '@/components/layout/app-shell';
-import { getTenantContext } from '@/lib/tenancy/get-tenant-context';
+import { PERMISSIONS } from '@/lib/authz/permissions';
+import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
 import { getReceivingFormOptions } from '@/lib/services/receiving';
 import { ReceiveForm } from '@/app/receiving/new/receive-form';
 
@@ -10,7 +11,7 @@ export default async function ReceiveInventoryPage({
 }: {
   searchParams?: Promise<{ purchaseOrderId?: string }>;
 }) {
-  const ctx = await getTenantContext();
+  const ctx = await requireTenantAccess(PERMISSIONS.receivingCreate);
   const { locations, suppliers, items, purchaseOrders } = await getReceivingFormOptions(ctx.organizationId);
   const params = (await searchParams) ?? {};
 

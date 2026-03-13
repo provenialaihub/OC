@@ -269,10 +269,12 @@ describe('Onaply foundation services', () => {
     assert.equal(updated?.leadTimeDays, 1);
     assert.equal(updated?.notes, 'Approved after onboarding review');
 
-    const outsider = await suppliersModule.updateSupplier('org-does-not-own-record', created.id, {
-      status: 'inactive',
-    });
-    assert.equal(outsider, null);
+    await assert.rejects(
+      suppliersModule.updateSupplier('org-does-not-own-record', created.id, {
+        status: 'inactive',
+      }),
+      /Supplier was not found/,
+    );
   });
 
   test('creates items with an inline category and updates tracked settings', async () => {
