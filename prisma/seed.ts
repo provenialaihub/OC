@@ -61,22 +61,29 @@ async function main() {
     { code: 'qt', name: 'Quart', category: 'volume', baseUnitCode: 'gal', conversionToBase: '0.25' },
   ];
 
+  // Prisma 7 does not support null in composite unique where clauses; use findFirst+create.
   for (const unit of units) {
-    await db.unitOfMeasure.upsert({
-      where: {
-        organizationId_code: {
-          organizationId: org.id,
-          code: unit.code,
+    const existing = await db.unitOfMeasure.findFirst({
+      where: { organizationId: null, code: unit.code },
+      select: { id: true },
+    });
+
+    if (existing) {
+      await db.unitOfMeasure.update({
+        where: { id: existing.id },
+        data: {
+          name: unit.name,
+          category: unit.category,
+          baseUnitCode: unit.baseUnitCode ?? null,
+          conversionToBase: unit.conversionToBase ?? null,
         },
-      },
-      update: {
-        name: unit.name,
-        category: unit.category,
-        baseUnitCode: unit.baseUnitCode ?? null,
-        conversionToBase: unit.conversionToBase ?? null,
-      },
-      create: {
-        organizationId: org.id,
+      });
+      continue;
+    }
+
+    await db.unitOfMeasure.create({
+      data: {
+        organizationId: null,
         code: unit.code,
         name: unit.name,
         category: unit.category,
