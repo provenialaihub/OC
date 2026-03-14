@@ -583,9 +583,7 @@ export async function createInventoryAdjustment(input: {
       resourceId: adjustment.id,
     });
 
-    return adjustment;
-  }).then(async (adjustment) => {
-    const quickBooksConnection = await ensureDefaultQuickBooksConnection(input.organizationId);
+    const quickBooksConnection = await ensureDefaultQuickBooksConnection(input.organizationId, tx);
 
     await createAccountingEvent({
       organizationId: input.organizationId,
@@ -603,6 +601,7 @@ export async function createInventoryAdjustment(input: {
         reasonCode,
         notes: input.notes ?? null,
       },
+      client: tx,
     });
 
     return adjustment;

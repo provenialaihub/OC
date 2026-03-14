@@ -791,4 +791,40 @@ describe('Onaply foundation services', () => {
     assert.equal(events[1]?.accountingEventType, 'inventory_adjustment_posted');
     assert.equal(events[1]?.integrationConnectionId, quickbooksConnection.id);
   });
+
+  test('claims and processes accounting events through the adapter runner', async () => {
+    await receivingModule.createReceiptWithPosting({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-123',
+      locationId: fixtures.locationId,
+      supplierId: fixtures.supplierId,
+      purchaseOrderId: fixtures.purchaseOrderId,
+      receiptMethod: 'truck_delivery',
+      receivedAt: '2026-03-13T18:00:00.000Z',
+      lines: [
+        {
+          itemId: fixtures.simpleItemId,
+          purchaseOrderLineId: fixtures.simplePoLineId,
+          receivedQuantity: 25,
+          acceptedQuantity: 25,
+        },
+      ],
+    });
+
+    const runner = await import('../src/lib/connectors/runner');
+    const result = await runner.processNextAccountingEvent(fixtures.organizationId);
+
+    assert.ok(result);
+    assert.equal(result?.provider, 'quickbooks');
+    assert.equal(result?.simulated, true);
+
+    const event = await db.accountingEvent.findFirstOrThrow({
+      where: { organizationId: fixtures.organizationId },
+      include: { exportAttempts: true },
+    });
+    assert.equal(event.status, 'exported');
+    assert.equal(event.exportAttempts.length, 2);
+    assert.equal(event.exportAttempts[0]?.status, 'started');
+    assert.equal(event.exportAttempts[1]?.status, 'succeeded');
+  });
 });

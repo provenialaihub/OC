@@ -493,7 +493,7 @@ export async function createReceiptWithPosting(input: ValidatedCreateReceiptInpu
       }
     }
 
-    const quickBooksConnection = await ensureDefaultQuickBooksConnection(data.organizationId);
+    const quickBooksConnection = await ensureDefaultQuickBooksConnection(data.organizationId, tx);
 
     await createAccountingEvent({
       organizationId: data.organizationId,
@@ -520,6 +520,7 @@ export async function createReceiptWithPosting(input: ValidatedCreateReceiptInpu
           holdType: line.holdType ?? null,
         })),
       },
+      client: tx,
     });
 
     return tx.receipt.findUniqueOrThrow({

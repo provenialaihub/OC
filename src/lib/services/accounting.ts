@@ -1,8 +1,10 @@
 import { Prisma } from '@prisma/client';
+import { quickBooksAdapter } from '@/lib/connectors/quickbooks/adapter';
 import { db } from '@/lib/db/client';
 import { NotFoundError } from '@/lib/errors/service-errors';
 
 export type AccountingProvider = 'quickbooks' | 'csv' | 'manual' | 'other';
+export type DbLike = Prisma.TransactionClient | typeof db;
 
 export type AccountingAdapter = {
   provider: AccountingProvider;
@@ -10,19 +12,29 @@ export type AccountingAdapter = {
     accountingEventType: string;
     payloadJson: Prisma.JsonValue;
   }) => Record<string, unknown>;
+  classifyError?: (error: unknown) => {
+    errorClass:
+      | 'auth_error'
+      | 'rate_limit'
+      | 'validation_error'
+      | 'mapping_missing'
+      | 'provider_unavailable'
+      | 'timeout'
+      | 'conflict'
+      | 'duplicate'
+      | 'unsupported_operation'
+      | 'data_quality_error'
+      | 'unknown';
+    message: string;
+  };
 };
 
+function resolveClient(client?: DbLike) {
+  return client ?? db;
+}
+
 const adapters: Record<AccountingProvider, AccountingAdapter> = {
-  quickbooks: {
-    provider: 'quickbooks',
-    buildPayload(event) {
-      return {
-        provider: 'quickbooks',
-        targetObject: event.accountingEventType,
-        payload: event.payloadJson,
-      };
-    },
-  },
+  quickbooks: quickBooksAdapter,
   csv: {
     provider: 'csv',
     buildPayload(event) {
@@ -64,14 +76,15 @@ export async function listIntegrationConnections(organizationId: string) {
   });
 }
 
-export async function ensureDefaultQuickBooksConnection(organizationId: string) {
-  const existing = await db.integrationConnection.findFirst({
+export async function ensureDefaultQuickBooksConnection(organizationId: string, client?: DbLike) {
+  const conn = resolveClient(client);
+  const existing = await conn.integrationConnection.findFirst({
     where: { organizationId, provider: 'quickbooks' },
   });
 
   if (existing) return existing;
 
-  return db.integrationConnection.create({
+  return conn.integrationConnection.create({
     data: {
       organizationId,
       provider: 'quickbooks',
@@ -97,8 +110,10 @@ export async function createAccountingEvent(args: {
   sourceEventId: string;
   accountingEventType: string;
   payload: Record<string, unknown>;
+  client?: DbLike;
 }) {
-  return db.accountingEvent.upsert({
+  const conn = resolveClient(args.client);
+  return conn.accountingEvent.upsert({
     where: {
       organizationId_sourceEventType_sourceEventId_accountingEventType: {
         organizationId: args.organizationId,
@@ -131,6 +146,22 @@ export async function listAccountingEvents(organizationId: string) {
     where: { organizationId },
     include: { integrationConnection: true, exportAttempts: true },
     orderBy: [{ createdAt: 'desc' }],
+  });
+}
+
+export async function claimPendingAccountingEvent(organizationId: string) {
+  const event = await db.accountingEvent.findFirst({
+    where: { organizationId, status: 'pending' },
+    orderBy: { createdAt: 'asc' },
+    include: { integrationConnection: true },
+  });
+
+  if (!event) return null;
+
+  return db.accountingEvent.update({
+    where: { id: event.id },
+    data: { status: 'processing', lastAttemptAt: new Date() },
+    include: { integrationConnection: true, exportAttempts: true },
   });
 }
 
