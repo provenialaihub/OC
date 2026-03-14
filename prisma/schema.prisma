@@ -141,6 +141,46 @@ enum InventoryHoldStatus {
   resolved
 }
 
+model IdempotencyKey {
+  id             String       @id @default(cuid())
+  organizationId String
+  operationType  String
+  idempotencyKey String
+  requestHash    String
+  status         String       @default("completed")
+  resourceType   String?
+  resourceId     String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, operationType, idempotencyKey])
+  @@index([organizationId, resourceType, resourceId])
+}
+
+model InventoryAdjustment {
+  id              String        @id @default(cuid())
+  organizationId  String
+  locationId      String
+  itemId          String
+  lotId           String?
+  adjustmentType  String
+  quantityDelta   Decimal       @db.Decimal(12, 2)
+  uomId           String
+  reasonCode      String
+  notes           String?
+  createdByUserId String?
+  createdAt       DateTime      @default(now())
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location        Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  item            Item          @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  lot             Lot?          @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  uom             UnitOfMeasure @relation(fields: [uomId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, locationId, createdAt])
+  @@index([organizationId, itemId, createdAt])
+}
+
 model Organization {
   id              String                   @id @default(cuid())
   slug            String                   @unique
@@ -156,6 +196,7 @@ model Organization {
   serviceAccounts ServiceAccount[]
   apiKeys         ApiKey[]
   auditEvents     AuditEvent[]
+  idempotencyKeys IdempotencyKey[]
   suppliers       Supplier[]
   unitsOfMeasure  UnitOfMeasure[]
   itemCategories  ItemCategory[]
@@ -169,6 +210,7 @@ model Organization {
   inventoryMovements InventoryMovement[]
   inventoryBalances InventoryBalance[]
   inventoryHolds  InventoryHold[]
+  inventoryAdjustments InventoryAdjustment[]
 }
 
 model Location {
@@ -190,6 +232,7 @@ model Location {
   inventoryMovements InventoryMovement[]
   inventoryBalances InventoryBalance[]
   inventoryHolds  InventoryHold[]
+  inventoryAdjustments InventoryAdjustment[]
 
   @@unique([organizationId, code])
 }
@@ -363,6 +406,7 @@ model UnitOfMeasure {
   purchaseOrderLines PurchaseOrderLine[]
   receiptLines     ReceiptLine[]
   inventoryMovements InventoryMovement[]
+  inventoryAdjustments InventoryAdjustment[]
 
   @@unique([organizationId, code])
   @@index([organizationId, category])
@@ -414,6 +458,7 @@ model Item {
   inventoryMovements     InventoryMovement[]
   inventoryBalances      InventoryBalance[]
   inventoryHolds         InventoryHold[]
+  inventoryAdjustments   InventoryAdjustment[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, itemType, isActive])
@@ -554,6 +599,7 @@ model Lot {
   inventoryMovements InventoryMovement[]
   inventoryBalances InventoryBalance[]
   inventoryHolds    InventoryHold[]
+  inventoryAdjustments InventoryAdjustment[]
 
   @@unique([organizationId, itemId, lotCode])
   @@index([organizationId, expirationDate])
@@ -619,6 +665,9 @@ model InventoryHold {
   quantity          Decimal?            @db.Decimal(12, 2)
   reasonCode        String
   status            InventoryHoldStatus @default(active)
+  createdByUserId   String?
+  releasedByUserId  String?
+  releaseReasonCode String?
   createdAt         DateTime            @default(now())
   releasedAt        DateTime?
   organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)

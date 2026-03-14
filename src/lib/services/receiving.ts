@@ -369,6 +369,7 @@ export async function createReceiptWithPosting(input: ValidatedCreateReceiptInpu
           holdType: line.holdType,
           quantity: line.acceptedQuantity,
           reasonCode: line.holdReasonCode ?? 'inspection_required',
+          createdByUserId: data.actorId ?? null,
         },
       });
 

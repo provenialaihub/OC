@@ -4,7 +4,9 @@ export const PERMISSIONS = {
   itemView: 'item.view',
   itemManage: 'item.manage',
   receivingCreate: 'receiving.create',
+  receivingReleaseHold: 'receiving.release_hold',
   inventoryView: 'inventory.view',
+  inventoryAdjust: 'inventory.adjust',
   purchasingView: 'purchasing.view',
 } as const;
 

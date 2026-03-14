@@ -48,6 +48,8 @@ type FixtureContext = {
   purchaseOrderId: string;
   lotTrackedPoLineId: string;
   simplePoLineId: string;
+  releaseHoldPermissionId: string;
+  inventoryAdjustPermissionId: string;
 };
 
 let dbModule: DbModule;
@@ -96,6 +98,23 @@ async function seedFixtures(): Promise<FixtureContext> {
       type: 'warehouse',
     },
   });
+
+  const [releaseHoldPermission, inventoryAdjustPermission] = await Promise.all([
+    db.permission.create({
+      data: {
+        key: `receiving.release_hold.${randomUUID().slice(0, 8)}`,
+        description: 'Release hold',
+        domain: 'receiving',
+      },
+    }),
+    db.permission.create({
+      data: {
+        key: `inventory.adjust.${randomUUID().slice(0, 8)}`,
+        description: 'Adjust inventory',
+        domain: 'inventory',
+      },
+    }),
+  ]);
 
   const [each, pounds] = await Promise.all([
     db.unitOfMeasure.create({
@@ -220,6 +239,8 @@ async function seedFixtures(): Promise<FixtureContext> {
     purchaseOrderId: purchaseOrder.id,
     lotTrackedPoLineId: lotTrackedPoLine.id,
     simplePoLineId: simplePoLine.id,
+    releaseHoldPermissionId: releaseHoldPermission.id,
+    inventoryAdjustPermissionId: inventoryAdjustPermission.id,
   };
 }
 
@@ -516,13 +537,161 @@ describe('Onaply foundation services', () => {
     assert.equal(detail.receipts.length, 1);
     assert.equal(detail.nextAction.href, 'receive');
     assert.equal(detail.lines.length, 2);
-    assert.equal(detail.lines[0]?.receipts[0]?.receiptNumber, 'RCV-00001');
-    assert.equal(detail.lines[0]?.remainingQuantity, 40);
-    assert.equal(detail.lines[1]?.remainingQuantity, 500);
+    const lotTrackedLine = detail.lines.find((line) => line.itemId === fixtures.lotTrackedItemId);
+    const simpleLine = detail.lines.find((line) => line.itemId === fixtures.simpleItemId);
+    assert.equal(lotTrackedLine?.receipts[0]?.receiptNumber, 'RCV-00001');
+    assert.equal(lotTrackedLine?.remainingQuantity, 40);
+    assert.equal(simpleLine?.remainingQuantity, 500);
 
     await assert.rejects(
       purchasingModule.getPurchaseOrderDetail('org-does-not-own-record', fixtures.purchaseOrderId),
       /Purchase order was not found/,
+    );
+  });
+
+  test('releases an active hold and is idempotent across retries', async () => {
+    await receivingModule.createReceiptWithPosting({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-123',
+      locationId: fixtures.locationId,
+      supplierId: fixtures.supplierId,
+      purchaseOrderId: fixtures.purchaseOrderId,
+      receiptMethod: 'truck_delivery',
+      receivedAt: '2026-03-13T18:00:00.000Z',
+      lines: [
+        {
+          itemId: fixtures.lotTrackedItemId,
+          purchaseOrderLineId: fixtures.lotTrackedPoLineId,
+          receivedQuantity: 80,
+          acceptedQuantity: 80,
+          lotCode: 'LOT-HOLD-001',
+          expirationDate: '2026-03-20T00:00:00.000Z',
+          holdType: 'quarantine',
+          holdReasonCode: 'inspection_required',
+        },
+      ],
+    });
+
+    const hold = await db.inventoryHold.findFirstOrThrow({
+      where: { organizationId: fixtures.organizationId, status: 'active' },
+    });
+
+    const inventoryModule = await import('../src/lib/services/inventory');
+    const released = await inventoryModule.releaseInventoryHold({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-456',
+      holdId: hold.id,
+      reasonCode: 'qa_passed',
+      idempotencyKey: 'release-hold-1',
+    });
+
+    assert.equal(released.status, 'released');
+    assert.equal(released.releaseReasonCode, 'qa_passed');
+
+    const retried = await (await import('../src/lib/services/inventory')).releaseInventoryHold({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-456',
+      holdId: hold.id,
+      reasonCode: 'qa_passed',
+      idempotencyKey: 'release-hold-1',
+    });
+
+    assert.equal(retried.id, released.id);
+
+    const movement = await db.inventoryMovement.findFirstOrThrow({
+      where: {
+        organizationId: fixtures.organizationId,
+        sourceReferenceType: 'inventory_hold',
+        sourceReferenceId: hold.id,
+        movementType: 'release_hold',
+      },
+    });
+    assert.equal(movement.quantityDelta.toString(), '80');
+
+    const balance = await db.inventoryBalance.findFirstOrThrow({
+      where: {
+        organizationId: fixtures.organizationId,
+        itemId: fixtures.lotTrackedItemId,
+      },
+    });
+    assert.equal(balance.availableQuantity.toString(), '80');
+    assert.equal(balance.heldQuantity.toString(), '0');
+
+    const keys = await db.idempotencyKey.findMany({
+      where: { organizationId: fixtures.organizationId, operationType: 'inventory_hold.release' },
+    });
+    assert.equal(keys.length, 1);
+    assert.equal(keys[0]?.resourceId, released.id);
+  });
+
+  test('creates an inventory adjustment and blocks impossible negative inventory', async () => {
+    await receivingModule.createReceiptWithPosting({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-123',
+      locationId: fixtures.locationId,
+      supplierId: fixtures.supplierId,
+      purchaseOrderId: fixtures.purchaseOrderId,
+      receiptMethod: 'truck_delivery',
+      receivedAt: '2026-03-13T18:00:00.000Z',
+      lines: [
+        {
+          itemId: fixtures.simpleItemId,
+          purchaseOrderLineId: fixtures.simplePoLineId,
+          receivedQuantity: 500,
+          acceptedQuantity: 500,
+        },
+      ],
+    });
+
+    const inventoryModule = await import('../src/lib/services/inventory');
+    const adjustment = await inventoryModule.createInventoryAdjustment({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-789',
+      locationId: fixtures.locationId,
+      itemId: fixtures.simpleItemId,
+      adjustmentType: 'damage',
+      quantityDelta: -50,
+      reasonCode: 'damage_found',
+      notes: 'Cracked trays during unload',
+      idempotencyKey: 'adjustment-1',
+    });
+
+    assert.equal(adjustment.reasonCode, 'damage_found');
+
+    const retried = await inventoryModule.createInventoryAdjustment({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-789',
+      locationId: fixtures.locationId,
+      itemId: fixtures.simpleItemId,
+      adjustmentType: 'damage',
+      quantityDelta: -50,
+      reasonCode: 'damage_found',
+      notes: 'Cracked trays during unload',
+      idempotencyKey: 'adjustment-1',
+    });
+    assert.equal(retried.id, adjustment.id);
+
+    const balance = await db.inventoryBalance.findFirstOrThrow({
+      where: {
+        organizationId: fixtures.organizationId,
+        locationId: fixtures.locationId,
+        itemId: fixtures.simpleItemId,
+      },
+    });
+    assert.equal(balance.onHandQuantity.toString(), '450');
+    assert.equal(balance.availableQuantity.toString(), '450');
+
+    await assert.rejects(
+      inventoryModule.createInventoryAdjustment({
+        organizationId: fixtures.organizationId,
+        actorId: 'user-789',
+        locationId: fixtures.locationId,
+        itemId: fixtures.simpleItemId,
+        adjustmentType: 'damage',
+        quantityDelta: -1000,
+        reasonCode: 'damage_found',
+      }),
+      /below zero/,
     );
   });
 });
