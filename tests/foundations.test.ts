@@ -742,4 +742,53 @@ describe('Onaply foundation services', () => {
     assert.equal(issues.filter((issue) => issue.issueType === 'receipt_hold').length, 1);
     assert.equal(issues.filter((issue) => issue.issueType === 'receipt_discrepancy').length, 1);
   });
+
+  test('creates provider-neutral accounting events for receipts and adjustments', async () => {
+    const receipt = await receivingModule.createReceiptWithPosting({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-123',
+      locationId: fixtures.locationId,
+      supplierId: fixtures.supplierId,
+      purchaseOrderId: fixtures.purchaseOrderId,
+      receiptMethod: 'truck_delivery',
+      receivedAt: '2026-03-13T18:00:00.000Z',
+      lines: [
+        {
+          itemId: fixtures.simpleItemId,
+          purchaseOrderLineId: fixtures.simplePoLineId,
+          receivedQuantity: 100,
+          acceptedQuantity: 100,
+        },
+      ],
+    });
+
+    const inventoryModule = await import('../src/lib/services/inventory');
+    await inventoryModule.createInventoryAdjustment({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-123',
+      locationId: fixtures.locationId,
+      itemId: fixtures.simpleItemId,
+      adjustmentType: 'correction',
+      quantityDelta: -10,
+      reasonCode: 'manual_correction',
+      notes: 'Cycle count correction',
+      idempotencyKey: 'acct-adjust-1',
+    });
+
+    const quickbooksConnection = await db.integrationConnection.findFirstOrThrow({
+      where: { organizationId: fixtures.organizationId, provider: 'quickbooks' },
+    });
+    assert.equal(quickbooksConnection.displayName, 'QuickBooks Online');
+
+    const events = await db.accountingEvent.findMany({
+      where: { organizationId: fixtures.organizationId },
+      orderBy: { createdAt: 'asc' },
+    });
+    assert.equal(events.length, 2);
+    assert.equal(events[0]?.accountingEventType, 'inventory_receipt_posted');
+    assert.equal(events[0]?.sourceEventId, receipt.id);
+    assert.equal(events[0]?.integrationConnectionId, quickbooksConnection.id);
+    assert.equal(events[1]?.accountingEventType, 'inventory_adjustment_posted');
+    assert.equal(events[1]?.integrationConnectionId, quickbooksConnection.id);
+  });
 });

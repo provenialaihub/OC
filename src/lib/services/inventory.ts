@@ -2,6 +2,7 @@ import { Prisma, type InventoryMovementType } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { db } from '@/lib/db/client';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/errors/service-errors';
+import { createAccountingEvent, ensureDefaultQuickBooksConnection } from '@/lib/services/accounting';
 
 function decimal(value: number | string | Prisma.Decimal) {
   if (value instanceof Prisma.Decimal) return value;
@@ -580,6 +581,28 @@ export async function createInventoryAdjustment(input: {
       idempotencyKey: input.idempotencyKey,
       resourceType: 'inventory_adjustment',
       resourceId: adjustment.id,
+    });
+
+    return adjustment;
+  }).then(async (adjustment) => {
+    const quickBooksConnection = await ensureDefaultQuickBooksConnection(input.organizationId);
+
+    await createAccountingEvent({
+      organizationId: input.organizationId,
+      integrationConnectionId: quickBooksConnection.id,
+      sourceEventType: 'inventory_adjustment',
+      sourceEventId: adjustment.id,
+      accountingEventType: 'inventory_adjustment_posted',
+      payload: {
+        adjustmentId: adjustment.id,
+        locationId: input.locationId,
+        itemId: input.itemId,
+        lotId: input.lotId ?? null,
+        adjustmentType,
+        quantityDelta: input.quantityDelta,
+        reasonCode,
+        notes: input.notes ?? null,
+      },
     });
 
     return adjustment;

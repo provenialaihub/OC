@@ -9,6 +9,7 @@ export const PERMISSIONS = {
   inventoryAdjust: 'inventory.adjust',
   purchasingView: 'purchasing.view',
   complianceView: 'compliance.view',
+  accountingView: 'accounting.view',
 } as const;
 
 export type AppPermission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

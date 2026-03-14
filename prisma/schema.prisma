@@ -141,6 +141,36 @@ enum InventoryHoldStatus {
   resolved
 }
 
+enum IntegrationProvider {
+  quickbooks
+  csv
+  manual
+  other
+}
+
+enum IntegrationConnectionStatus {
+  active
+  disconnected
+  error
+  pending_auth
+}
+
+enum AccountingEventStatus {
+  pending
+  processing
+  exported
+  synced
+  failed
+  ignored
+}
+
+enum AccountingExportAttemptStatus {
+  started
+  succeeded
+  failed
+  abandoned
+}
+
 model IdempotencyKey {
   id             String       @id @default(cuid())
   organizationId String
@@ -204,6 +234,89 @@ model ComplianceIssue {
   @@index([organizationId, relatedEntityType, relatedEntityId])
 }
 
+model IntegrationConnection {
+  id               String                    @id @default(cuid())
+  organizationId   String
+  provider         IntegrationProvider
+  status           IntegrationConnectionStatus @default(pending_auth)
+  displayName      String
+  authMetadataJson Json?
+  configJson       Json?
+  lastSyncAt       DateTime?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  organization     Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  accountingMappings AccountingMapping[]
+  accountingEvents AccountingEvent[]
+  exportAttempts   AccountingExportAttempt[]
+
+  @@index([organizationId, provider, status])
+}
+
+model AccountingMapping {
+  id                    String               @id @default(cuid())
+  organizationId        String
+  integrationConnectionId String?
+  mappingType           String
+  internalEntityType    String
+  internalEntityId      String
+  externalRef           String
+  metadataJson          Json?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  organization          Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  integrationConnection IntegrationConnection? @relation(fields: [integrationConnectionId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, mappingType])
+  @@unique([organizationId, integrationConnectionId, mappingType, internalEntityType, internalEntityId])
+}
+
+model AccountingEvent {
+  id                    String               @id @default(cuid())
+  organizationId        String
+  integrationConnectionId String?
+  sourceEventType       String
+  sourceEventId         String
+  accountingEventType   String
+  status                AccountingEventStatus @default(pending)
+  payloadJson           Json
+  externalRef           String?
+  lastAttemptAt         DateTime?
+  lastErrorClass        String?
+  lastErrorMessage      String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  organization          Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  integrationConnection IntegrationConnection? @relation(fields: [integrationConnectionId], references: [id], onDelete: SetNull)
+  exportAttempts        AccountingExportAttempt[]
+
+  @@index([organizationId, status, createdAt])
+  @@index([organizationId, sourceEventType, sourceEventId])
+  @@unique([organizationId, sourceEventType, sourceEventId, accountingEventType])
+}
+
+model AccountingExportAttempt {
+  id                    String                     @id @default(cuid())
+  organizationId        String
+  accountingEventId     String
+  integrationConnectionId String?
+  status                AccountingExportAttemptStatus @default(started)
+  providerRequestId     String?
+  errorClass            String?
+  errorMessage          String?
+  attemptNumber         Int                        @default(1)
+  startedAt             DateTime                   @default(now())
+  finishedAt            DateTime?
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+  organization          Organization               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  accountingEvent       AccountingEvent            @relation(fields: [accountingEventId], references: [id], onDelete: Cascade)
+  integrationConnection IntegrationConnection?     @relation(fields: [integrationConnectionId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status, startedAt])
+  @@index([organizationId, accountingEventId])
+}
+
 model Organization {
   id              String                   @id @default(cuid())
   slug            String                   @unique
@@ -235,6 +348,10 @@ model Organization {
   inventoryHolds  InventoryHold[]
   inventoryAdjustments InventoryAdjustment[]
   complianceIssues ComplianceIssue[]
+  integrationConnections IntegrationConnection[]
+  accountingMappings AccountingMapping[]
+  accountingEvents AccountingEvent[]
+  accountingExportAttempts AccountingExportAttempt[]
 }
 
 model Location {

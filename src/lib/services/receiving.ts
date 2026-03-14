@@ -1,6 +1,7 @@
 import { Prisma, type InventoryHoldType, type ReceiptStatus } from '@prisma/client';
 import { db } from '@/lib/db/client';
 import { NotFoundError, ValidationError } from '@/lib/errors/service-errors';
+import { createAccountingEvent, ensureDefaultQuickBooksConnection } from '@/lib/services/accounting';
 import { ensureComplianceIssue } from '@/lib/services/compliance';
 import { validateCreateReceiptInput } from '@/lib/validation/receiving';
 
@@ -491,6 +492,35 @@ export async function createReceiptWithPosting(input: ValidatedCreateReceiptInpu
         });
       }
     }
+
+    const quickBooksConnection = await ensureDefaultQuickBooksConnection(data.organizationId);
+
+    await createAccountingEvent({
+      organizationId: data.organizationId,
+      integrationConnectionId: quickBooksConnection.id,
+      sourceEventType: 'receipt',
+      sourceEventId: receipt.id,
+      accountingEventType: 'inventory_receipt_posted',
+      payload: {
+        receiptId: receipt.id,
+        receiptNumber,
+        supplierId: data.supplierId,
+        locationId: data.locationId,
+        purchaseOrderId: data.purchaseOrderId ?? null,
+        receivedAt: receivedAt.toISOString(),
+        status,
+        lines: data.lines.map((line) => ({
+          itemId: line.itemId,
+          purchaseOrderLineId: line.purchaseOrderLineId ?? null,
+          receivedQuantity: line.receivedQuantity,
+          acceptedQuantity: line.acceptedQuantity,
+          rejectedQuantity: line.rejectedQuantity ?? 0,
+          lotCode: line.lotCode ?? null,
+          discrepancyType: line.discrepancyType ?? null,
+          holdType: line.holdType ?? null,
+        })),
+      },
+    });
 
     return tx.receipt.findUniqueOrThrow({
       where: { id: receipt.id },
