@@ -211,6 +211,40 @@ export async function listActiveHolds(organizationId: string) {
   });
 }
 
+export async function getLotDetail(organizationId: string, lotId: string) {
+  return db.lot.findFirst({
+    where: { id: lotId, organizationId },
+    include: {
+      item: { include: { baseUom: true, category: true } },
+      supplier: true,
+      sourceReceiptLine: {
+        include: {
+          receipt: {
+            include: {
+              supplier: true,
+              location: true,
+              purchaseOrder: true,
+            },
+          },
+        },
+      },
+      inventoryBalances: {
+        include: { location: true },
+        orderBy: { updatedAt: 'desc' },
+      },
+      inventoryHolds: {
+        include: { location: true },
+        orderBy: { createdAt: 'desc' },
+      },
+      inventoryMovements: {
+        include: { location: true },
+        orderBy: { occurredAt: 'desc' },
+        take: 25,
+      },
+    },
+  });
+}
+
 export async function releaseInventoryHold(input: {
   organizationId: string;
   actorId?: string | null;
