@@ -5,6 +5,7 @@ import { listAccountingEvents, listAccountingMappings, listAccountingReconciliat
 import { PERMISSIONS } from '@/lib/authz/permissions';
 import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
 import { QuickBooksConnectForm } from './quickbooks-connect-form';
+import { QuickBooksConnectionControls } from './quickbooks-connection-controls';
 
 export default async function IntegrationsPage({
   searchParams,
@@ -78,6 +79,7 @@ export default async function IntegrationsPage({
                   <div>Last auth check: <span className="text-slate-300">{connection.lastAuthCheckAt ? new Date(connection.lastAuthCheckAt).toLocaleString() : '—'}</span></div>
                   <div>Last good API: <span className="text-slate-300">{connection.lastSuccessfulApiAt ? new Date(connection.lastSuccessfulApiAt).toLocaleString() : '—'}</span></div>
                 </div>
+                {connection.provider === 'quickbooks' && <QuickBooksConnectionControls connectionId={connection.id} />}
                 <pre className="mt-4 overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/80 p-3 text-xs text-slate-300">{JSON.stringify(connection.configJson ?? {}, null, 2)}</pre>
               </div>
             ))}

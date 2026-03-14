@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { quickBooksAdapter } from '@/lib/connectors/quickbooks/adapter';
+import { decryptQuickBooksToken, encryptQuickBooksToken, probeQuickBooksCompanyInfo, refreshQuickBooksToken } from '@/lib/connectors/quickbooks/oauth';
 import { db } from '@/lib/db/client';
-import { NotFoundError } from '@/lib/errors/service-errors';
+import { NotFoundError, ValidationError } from '@/lib/errors/service-errors';
 
 export type AccountingProvider = 'quickbooks' | 'csv' | 'manual' | 'other';
 export type DbLike = Prisma.TransactionClient | typeof db;
@@ -135,6 +136,109 @@ export async function updateIntegrationConnectionAuth(args: {
       lastSuccessfulApiAt: args.status === 'active' ? new Date() : undefined,
     },
   });
+}
+
+export async function storeQuickBooksTokens(args: {
+  integrationConnectionId: string;
+  accessToken: string;
+  refreshToken: string;
+  tokenType: string;
+  refreshTokenExpiresIn?: number | null;
+}) {
+  const connection = await db.integrationConnection.findUniqueOrThrow({ where: { id: args.integrationConnectionId } });
+  const authMetadata =
+    typeof connection.authMetadataJson === 'object' && connection.authMetadataJson
+      ? (connection.authMetadataJson as Record<string, unknown>)
+      : {};
+
+  return db.integrationConnection.update({
+    where: { id: args.integrationConnectionId },
+    data: {
+      authMetadataJson: {
+        ...authMetadata,
+        tokenType: args.tokenType,
+        encryptedAccessToken: encryptQuickBooksToken(args.accessToken),
+        encryptedRefreshToken: encryptQuickBooksToken(args.refreshToken),
+        refreshTokenExpiresIn: args.refreshTokenExpiresIn ?? null,
+      },
+    },
+  });
+}
+
+export async function refreshQuickBooksConnection(integrationConnectionId: string) {
+  const connection = await db.integrationConnection.findUnique({ where: { id: integrationConnectionId } });
+  if (!connection) throw new NotFoundError('Integration connection not found.');
+  if (connection.provider !== 'quickbooks') throw new ValidationError('Refresh is only implemented for QuickBooks connections.');
+
+  const authMetadata =
+    typeof connection.authMetadataJson === 'object' && connection.authMetadataJson
+      ? (connection.authMetadataJson as Record<string, unknown>)
+      : {};
+
+  if (typeof authMetadata.encryptedRefreshToken !== 'string') {
+    throw new ValidationError('No stored QuickBooks refresh token found.');
+  }
+
+  const refreshed = await refreshQuickBooksToken(decryptQuickBooksToken(authMetadata.encryptedRefreshToken));
+  const tokenExpiresAt = new Date(Date.now() + refreshed.expires_in * 1000);
+
+  await storeQuickBooksTokens({
+    integrationConnectionId,
+    accessToken: refreshed.access_token,
+    refreshToken: refreshed.refresh_token,
+    tokenType: refreshed.token_type,
+    refreshTokenExpiresIn: refreshed.x_refresh_token_expires_in ?? null,
+  });
+
+  return db.integrationConnection.update({
+    where: { id: integrationConnectionId },
+    data: {
+      status: 'active',
+      tokenExpiresAt,
+      lastAuthCheckAt: new Date(),
+      lastSuccessfulApiAt: new Date(),
+    },
+  });
+}
+
+export async function checkQuickBooksConnectionHealth(integrationConnectionId: string) {
+  const connection = await db.integrationConnection.findUnique({ where: { id: integrationConnectionId } });
+  if (!connection) throw new NotFoundError('Integration connection not found.');
+  if (connection.provider !== 'quickbooks') throw new ValidationError('Health check is only implemented for QuickBooks connections.');
+  if (!connection.realmId) throw new ValidationError('QuickBooks realmId is missing.');
+
+  let authMetadata =
+    typeof connection.authMetadataJson === 'object' && connection.authMetadataJson
+      ? (connection.authMetadataJson as Record<string, unknown>)
+      : {};
+
+  if (!(typeof authMetadata.encryptedAccessToken === 'string')) {
+    throw new ValidationError('No stored QuickBooks access token found.');
+  }
+
+  if (connection.tokenExpiresAt && connection.tokenExpiresAt.getTime() <= Date.now() + 60_000) {
+    const refreshed = await refreshQuickBooksConnection(integrationConnectionId);
+    authMetadata = (refreshed.authMetadataJson as Record<string, unknown> | null) ?? authMetadata;
+  }
+
+  const accessToken = decryptQuickBooksToken(String(authMetadata.encryptedAccessToken));
+  const companyInfo = await probeQuickBooksCompanyInfo({ accessToken, realmId: connection.realmId });
+
+  await db.integrationConnection.update({
+    where: { id: integrationConnectionId },
+    data: {
+      status: 'active',
+      lastAuthCheckAt: new Date(),
+      lastSuccessfulApiAt: new Date(),
+      authMetadataJson: {
+        ...authMetadata,
+        lastHealthCheckAt: new Date().toISOString(),
+        lastCompanyInfoProbe: companyInfo?.CompanyInfo?.CompanyName ?? null,
+      },
+    },
+  });
+
+  return companyInfo;
 }
 
 export async function upsertAccountingMapping(args: {

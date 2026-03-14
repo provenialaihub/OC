@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { exchangeQuickBooksCode } from '@/lib/connectors/quickbooks/oauth';
 import { db } from '@/lib/db/client';
+import { storeQuickBooksTokens } from '@/lib/services/accounting';
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
@@ -71,15 +72,19 @@ export async function GET(request: NextRequest) {
         lastSuccessfulApiAt: new Date(),
         authMetadataJson: {
           ...authMetadata,
-          tokenType: token.token_type,
-          accessTokenRef: 'quickbooks:access-token:redacted',
-          refreshTokenRef: 'quickbooks:refresh-token:redacted',
-          refreshTokenExpiresIn: token.x_refresh_token_expires_in ?? null,
           connectedAt: new Date().toISOString(),
           oauthState: null,
           codeVerifier: null,
         },
       },
+    });
+
+    await storeQuickBooksTokens({
+      integrationConnectionId: connection.id,
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token,
+      tokenType: token.token_type,
+      refreshTokenExpiresIn: token.x_refresh_token_expires_in ?? null,
     });
 
     redirectTo.searchParams.set('qb_connected', '1');
