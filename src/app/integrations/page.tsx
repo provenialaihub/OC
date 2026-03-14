@@ -1,15 +1,17 @@
 export const dynamic = 'force-dynamic';
 
 import { AppShell } from '@/components/layout/app-shell';
-import { listAccountingEvents, listIntegrationConnections } from '@/lib/services/accounting';
+import { listAccountingEvents, listAccountingMappings, listAccountingReconciliationIssues, listIntegrationConnections } from '@/lib/services/accounting';
 import { PERMISSIONS } from '@/lib/authz/permissions';
 import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
 
 export default async function IntegrationsPage() {
   const ctx = await requireTenantAccess(PERMISSIONS.accountingView);
-  const [connections, events] = await Promise.all([
+  const [connections, events, mappings, reconciliationIssues] = await Promise.all([
     listIntegrationConnections(ctx.organizationId),
     listAccountingEvents(ctx.organizationId),
+    listAccountingMappings(ctx.organizationId),
+    listAccountingReconciliationIssues(ctx.organizationId),
   ]);
 
   return (
@@ -26,8 +28,9 @@ export default async function IntegrationsPage() {
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Card label="Connections" value={String(connections.length)} />
           <Card label="Pending events" value={String(events.filter((event) => event.status === 'pending').length)} />
+          <Card label="Blocked events" value={String(events.filter((event) => event.status === 'blocked').length)} />
           <Card label="Failed events" value={String(events.filter((event) => event.status === 'failed').length)} />
-          <Card label="Exported events" value={String(events.filter((event) => event.status === 'exported' || event.status === 'synced').length)} />
+          <Card label="Open reconciliation" value={String(reconciliationIssues.filter((issue) => issue.status === 'open').length)} />
         </section>
 
         <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
@@ -47,9 +50,46 @@ export default async function IntegrationsPage() {
                   </div>
                   <div className="text-xs text-slate-500">{connection.lastSyncAt ? new Date(connection.lastSyncAt).toLocaleString() : 'Never synced'}</div>
                 </div>
+                <div className="mt-3 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
+                  <div>Realm: <span className="text-slate-300">{connection.realmId ?? '—'}</span></div>
+                  <div>Token expires: <span className="text-slate-300">{connection.tokenExpiresAt ? new Date(connection.tokenExpiresAt).toLocaleString() : '—'}</span></div>
+                  <div>Last auth check: <span className="text-slate-300">{connection.lastAuthCheckAt ? new Date(connection.lastAuthCheckAt).toLocaleString() : '—'}</span></div>
+                  <div>Last good API: <span className="text-slate-300">{connection.lastSuccessfulApiAt ? new Date(connection.lastSuccessfulApiAt).toLocaleString() : '—'}</span></div>
+                </div>
                 <pre className="mt-4 overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/80 p-3 text-xs text-slate-300">{JSON.stringify(connection.configJson ?? {}, null, 2)}</pre>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+          <div className="flex items-center justify-between gap-4">
+            <h3 className="text-lg font-medium">Accounting mappings</h3>
+            <span className="text-xs uppercase tracking-wider text-slate-500">Required bridge refs</span>
+          </div>
+          <div className="mt-4 overflow-hidden rounded-xl border border-slate-800">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-950 text-left text-xs uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Type</th>
+                  <th className="px-4 py-3">Internal</th>
+                  <th className="px-4 py-3">External ref</th>
+                  <th className="px-4 py-3">Connection</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {mappings.length === 0 ? (
+                  <tr><td colSpan={4} className="px-4 py-8 text-slate-400">No accounting mappings yet.</td></tr>
+                ) : mappings.map((mapping) => (
+                  <tr key={mapping.id}>
+                    <td className="px-4 py-3 text-white">{mapping.mappingType}</td>
+                    <td className="px-4 py-3 text-slate-300">{mapping.internalEntityType} · {mapping.internalEntityId}</td>
+                    <td className="px-4 py-3 text-slate-300">{mapping.externalName ?? mapping.externalRef}</td>
+                    <td className="px-4 py-3 text-slate-300">{mapping.integrationConnection?.displayName ?? 'Global'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
 
@@ -78,13 +118,35 @@ export default async function IntegrationsPage() {
                     <td className="px-4 py-3 text-white">{event.accountingEventType.replace('_', ' ')}</td>
                     <td className="px-4 py-3 text-slate-300">{event.sourceEventType} · {event.sourceEventId}</td>
                     <td className="px-4 py-3 text-slate-300">{event.integrationConnection?.displayName ?? 'Unassigned'}</td>
-                    <td className="px-4 py-3 text-slate-300">{event.status}</td>
+                    <td className="px-4 py-3 text-slate-300">{event.status}{event.reconciliationIssues.length > 0 ? ` · ${event.reconciliationIssues.length} issue(s)` : ''}</td>
                     <td className="px-4 py-3 text-slate-300">{event.exportAttempts.length}</td>
                     <td className="px-4 py-3 text-slate-300">{new Date(event.createdAt).toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+          <div className="flex items-center justify-between gap-4">
+            <h3 className="text-lg font-medium">Reconciliation issues</h3>
+            <span className="text-xs uppercase tracking-wider text-slate-500">What blocks trust</span>
+          </div>
+          <div className="mt-4 space-y-3">
+            {reconciliationIssues.length === 0 ? (
+              <p className="text-sm text-slate-400">No reconciliation issues yet.</p>
+            ) : reconciliationIssues.map((issue) => (
+              <div key={issue.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="font-medium text-white">{issue.issueType}</div>
+                    <div className="mt-1 text-sm text-slate-400">{issue.description}</div>
+                  </div>
+                  <div className="text-xs text-slate-500">{issue.status} · {new Date(issue.createdAt).toLocaleString()}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       </div>

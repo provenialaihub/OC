@@ -792,7 +792,7 @@ describe('Onaply foundation services', () => {
     assert.equal(events[1]?.integrationConnectionId, quickbooksConnection.id);
   });
 
-  test('claims and processes accounting events through the adapter runner', async () => {
+  test('blocks accounting export when connection and mappings are not ready', async () => {
     await receivingModule.createReceiptWithPosting({
       organizationId: fixtures.organizationId,
       actorId: 'user-123',
@@ -813,18 +813,80 @@ describe('Onaply foundation services', () => {
 
     const runner = await import('../src/lib/connectors/runner');
     const result = await runner.processNextAccountingEvent(fixtures.organizationId);
+    assert.equal(result, null);
+
+    const event = await db.accountingEvent.findFirstOrThrow({
+      where: { organizationId: fixtures.organizationId },
+      include: { reconciliationIssues: true },
+    });
+    assert.equal(event.status, 'blocked');
+    assert.equal(event.reconciliationIssues.length, 1);
+    assert.match(event.lastErrorMessage ?? '', /Connection is pending_auth|realmId is missing|Missing supplier/);
+  });
+
+  test('claims and processes accounting events through the adapter runner when ready', async () => {
+    const receipt = await receivingModule.createReceiptWithPosting({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-123',
+      locationId: fixtures.locationId,
+      supplierId: fixtures.supplierId,
+      purchaseOrderId: fixtures.purchaseOrderId,
+      receiptMethod: 'truck_delivery',
+      receivedAt: '2026-03-13T18:00:00.000Z',
+      lines: [
+        {
+          itemId: fixtures.simpleItemId,
+          purchaseOrderLineId: fixtures.simplePoLineId,
+          receivedQuantity: 25,
+          acceptedQuantity: 25,
+        },
+      ],
+    });
+
+    const accountingModule = await import('../src/lib/services/accounting');
+    const connection = await db.integrationConnection.findFirstOrThrow({
+      where: { organizationId: fixtures.organizationId, provider: 'quickbooks' },
+    });
+
+    await accountingModule.updateIntegrationConnectionAuth({
+      organizationId: fixtures.organizationId,
+      integrationConnectionId: connection.id,
+      status: 'active',
+      realmId: 'realm-blue-gourmet',
+      grantedScopes: ['com.intuit.quickbooks.accounting'],
+      tokenExpiresAt: new Date('2026-03-14T18:00:00.000Z'),
+      authMetadata: { refreshTokenRef: 'secret://qb/refresh' },
+    });
+
+    await accountingModule.upsertAccountingMapping({
+      organizationId: fixtures.organizationId,
+      integrationConnectionId: connection.id,
+      mappingType: accountingModule.ACCOUNTING_MAPPING_TYPES.supplierVendor,
+      internalEntityType: 'supplier',
+      internalEntityId: fixtures.supplierId,
+      externalRef: 'QB-VENDOR-1',
+      externalName: 'US Foods (QBO)',
+    });
+
+    const event = await db.accountingEvent.findFirstOrThrow({
+      where: { organizationId: fixtures.organizationId, sourceEventId: receipt.id },
+    });
+    await db.accountingEvent.update({ where: { id: event.id }, data: { status: 'pending' } });
+
+    const runner = await import('../src/lib/connectors/runner');
+    const result = await runner.processNextAccountingEvent(fixtures.organizationId);
 
     assert.ok(result);
     assert.equal(result?.provider, 'quickbooks');
     assert.equal(result?.simulated, true);
 
-    const event = await db.accountingEvent.findFirstOrThrow({
-      where: { organizationId: fixtures.organizationId },
+    const updated = await db.accountingEvent.findFirstOrThrow({
+      where: { id: event.id },
       include: { exportAttempts: true },
     });
-    assert.equal(event.status, 'exported');
-    assert.equal(event.exportAttempts.length, 2);
-    assert.equal(event.exportAttempts[0]?.status, 'started');
-    assert.equal(event.exportAttempts[1]?.status, 'succeeded');
+    assert.equal(updated.status, 'exported');
+    assert.equal(updated.exportAttempts.length, 2);
+    assert.equal(updated.exportAttempts[0]?.status, 'started');
+    assert.equal(updated.exportAttempts[1]?.status, 'succeeded');
   });
 });

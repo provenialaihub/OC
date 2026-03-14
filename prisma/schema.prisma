@@ -152,12 +152,14 @@ enum IntegrationConnectionStatus {
   active
   disconnected
   error
+  expired
   pending_auth
 }
 
 enum AccountingEventStatus {
   pending
   processing
+  blocked
   exported
   synced
   failed
@@ -242,6 +244,11 @@ model IntegrationConnection {
   displayName      String
   authMetadataJson Json?
   configJson       Json?
+  realmId          String?
+  grantedScopes    String[]                  @default([])
+  tokenExpiresAt   DateTime?
+  lastAuthCheckAt  DateTime?
+  lastSuccessfulApiAt DateTime?
   lastSyncAt       DateTime?
   createdAt        DateTime                  @default(now())
   updatedAt        DateTime                  @updatedAt
@@ -249,6 +256,7 @@ model IntegrationConnection {
   accountingMappings AccountingMapping[]
   accountingEvents AccountingEvent[]
   exportAttempts   AccountingExportAttempt[]
+  reconciliationIssues AccountingReconciliationIssue[]
 
   @@index([organizationId, provider, status])
 }
@@ -261,6 +269,7 @@ model AccountingMapping {
   internalEntityType    String
   internalEntityId      String
   externalRef           String
+  externalName          String?
   metadataJson          Json?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
@@ -289,6 +298,7 @@ model AccountingEvent {
   organization          Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   integrationConnection IntegrationConnection? @relation(fields: [integrationConnectionId], references: [id], onDelete: SetNull)
   exportAttempts        AccountingExportAttempt[]
+  reconciliationIssues  AccountingReconciliationIssue[]
 
   @@index([organizationId, status, createdAt])
   @@index([organizationId, sourceEventType, sourceEventId])
@@ -314,6 +324,29 @@ model AccountingExportAttempt {
   integrationConnection IntegrationConnection?     @relation(fields: [integrationConnectionId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status, startedAt])
+  @@index([organizationId, accountingEventId])
+}
+
+model AccountingReconciliationIssue {
+  id                    String               @id @default(cuid())
+  organizationId        String
+  integrationConnectionId String?
+  accountingEventId     String?
+  issueType             String
+  status                String               @default("open")
+  description           String
+  internalRefJson       Json?
+  externalRefJson       Json?
+  resolutionNotes       String?
+  resolvedByUserId      String?
+  resolvedAt            DateTime?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  organization          Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  integrationConnection IntegrationConnection? @relation(fields: [integrationConnectionId], references: [id], onDelete: SetNull)
+  accountingEvent       AccountingEvent?     @relation(fields: [accountingEventId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status, issueType])
   @@index([organizationId, accountingEventId])
 }
 
@@ -352,6 +385,7 @@ model Organization {
   accountingMappings AccountingMapping[]
   accountingEvents AccountingEvent[]
   accountingExportAttempts AccountingExportAttempt[]
+  accountingReconciliationIssues AccountingReconciliationIssue[]
 }
 
 model Location {
