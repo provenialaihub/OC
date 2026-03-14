@@ -4,9 +4,18 @@ import { AppShell } from '@/components/layout/app-shell';
 import { listAccountingEvents, listAccountingMappings, listAccountingReconciliationIssues, listIntegrationConnections } from '@/lib/services/accounting';
 import { PERMISSIONS } from '@/lib/authz/permissions';
 import { requireTenantAccess } from '@/lib/authz/require-tenant-access';
+import { QuickBooksConnectForm } from './quickbooks-connect-form';
 
-export default async function IntegrationsPage() {
+export default async function IntegrationsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const ctx = await requireTenantAccess(PERMISSIONS.accountingView);
+  const query = (await searchParams) ?? {};
+  const qbConnected = query.qb_connected === '1';
+  const qbError = typeof query.qb_error === 'string' ? query.qb_error : null;
+
   const [connections, events, mappings, reconciliationIssues] = await Promise.all([
     listIntegrationConnections(ctx.organizationId),
     listAccountingEvents(ctx.organizationId),
@@ -25,7 +34,20 @@ export default async function IntegrationsPage() {
           </p>
         </header>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {qbConnected && (
+          <div className="rounded-2xl border border-emerald-800 bg-emerald-950/40 p-4 text-sm text-emerald-300">
+            QuickBooks connected successfully.
+          </div>
+        )}
+        {qbError && (
+          <div className="rounded-2xl border border-rose-800 bg-rose-950/40 p-4 text-sm text-rose-300">
+            QuickBooks connection failed: {qbError}
+          </div>
+        )}
+
+        <QuickBooksConnectForm />
+
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <Card label="Connections" value={String(connections.length)} />
           <Card label="Pending events" value={String(events.filter((event) => event.status === 'pending').length)} />
           <Card label="Blocked events" value={String(events.filter((event) => event.status === 'blocked').length)} />
