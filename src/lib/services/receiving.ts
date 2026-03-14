@@ -1,6 +1,7 @@
 import { Prisma, type InventoryHoldType, type ReceiptStatus } from '@prisma/client';
 import { db } from '@/lib/db/client';
 import { NotFoundError, ValidationError } from '@/lib/errors/service-errors';
+import { ensureComplianceIssue } from '@/lib/services/compliance';
 import { validateCreateReceiptInput } from '@/lib/validation/receiving';
 
 export type CreateReceiptInput = ReturnType<typeof validateCreateReceiptInput>;
@@ -437,6 +438,59 @@ export async function createReceiptWithPosting(input: ValidatedCreateReceiptInpu
           })),
       ],
     });
+
+    const linesWithExceptions = await tx.receiptLine.findMany({
+      where: {
+        receiptId: receipt.id,
+        OR: [
+          { holdType: { not: null } },
+          { discrepancyType: { not: null } },
+        ],
+      },
+      include: { item: true },
+    });
+
+    for (const line of linesWithExceptions) {
+      if (line.holdType) {
+        await ensureComplianceIssue({
+          organizationId: data.organizationId,
+          locationId: data.locationId,
+          issueType: 'receipt_hold',
+          severity: line.holdType === 'quarantine' ? 'high' : 'medium',
+          relatedEntityType: 'receipt_line',
+          relatedEntityId: line.id,
+          actorType: 'user',
+          actorId: data.actorId ?? null,
+          description: `Receipt line for ${line.item.name} was placed on ${line.holdType.replace('_', ' ')}.`,
+          metadata: {
+            receiptId: receipt.id,
+            receiptNumber,
+            holdType: line.holdType,
+            holdReasonCode: line.holdReasonCode,
+          },
+        });
+      }
+
+      if (line.discrepancyType) {
+        await ensureComplianceIssue({
+          organizationId: data.organizationId,
+          locationId: data.locationId,
+          issueType: 'receipt_discrepancy',
+          severity: ['wrong_item', 'missing_doc'].includes(line.discrepancyType) ? 'high' : 'medium',
+          relatedEntityType: 'receipt_line',
+          relatedEntityId: line.id,
+          actorType: 'user',
+          actorId: data.actorId ?? null,
+          description: `Receipt discrepancy on ${line.item.name}: ${line.discrepancyType.replace('_', ' ')}.`,
+          metadata: {
+            receiptId: receipt.id,
+            receiptNumber,
+            discrepancyType: line.discrepancyType,
+            discrepancyNotes: line.discrepancyNotes,
+          },
+        });
+      }
+    }
 
     return tx.receipt.findUniqueOrThrow({
       where: { id: receipt.id },

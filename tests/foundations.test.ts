@@ -50,6 +50,7 @@ type FixtureContext = {
   simplePoLineId: string;
   releaseHoldPermissionId: string;
   inventoryAdjustPermissionId: string;
+  complianceViewPermissionId: string;
 };
 
 let dbModule: DbModule;
@@ -99,7 +100,7 @@ async function seedFixtures(): Promise<FixtureContext> {
     },
   });
 
-  const [releaseHoldPermission, inventoryAdjustPermission] = await Promise.all([
+  const [releaseHoldPermission, inventoryAdjustPermission, complianceViewPermission] = await Promise.all([
     db.permission.create({
       data: {
         key: `receiving.release_hold.${randomUUID().slice(0, 8)}`,
@@ -112,6 +113,13 @@ async function seedFixtures(): Promise<FixtureContext> {
         key: `inventory.adjust.${randomUUID().slice(0, 8)}`,
         description: 'Adjust inventory',
         domain: 'inventory',
+      },
+    }),
+    db.permission.create({
+      data: {
+        key: `compliance.view.${randomUUID().slice(0, 8)}`,
+        description: 'View compliance',
+        domain: 'compliance',
       },
     }),
   ]);
@@ -241,6 +249,7 @@ async function seedFixtures(): Promise<FixtureContext> {
     simplePoLineId: simplePoLine.id,
     releaseHoldPermissionId: releaseHoldPermission.id,
     inventoryAdjustPermissionId: inventoryAdjustPermission.id,
+    complianceViewPermissionId: complianceViewPermission.id,
   };
 }
 
@@ -693,5 +702,44 @@ describe('Onaply foundation services', () => {
       }),
       /below zero/,
     );
+  });
+
+  test('auto-creates compliance issues for held and discrepant receipt lines', async () => {
+    await receivingModule.createReceiptWithPosting({
+      organizationId: fixtures.organizationId,
+      actorId: 'user-123',
+      locationId: fixtures.locationId,
+      supplierId: fixtures.supplierId,
+      purchaseOrderId: fixtures.purchaseOrderId,
+      receiptMethod: 'truck_delivery',
+      receivedAt: '2026-03-13T18:00:00.000Z',
+      lines: [
+        {
+          itemId: fixtures.lotTrackedItemId,
+          purchaseOrderLineId: fixtures.lotTrackedPoLineId,
+          receivedQuantity: 40,
+          acceptedQuantity: 40,
+          lotCode: 'LOT-COMP-001',
+          expirationDate: '2026-03-20T00:00:00.000Z',
+          holdType: 'quarantine',
+          holdReasonCode: 'inspection_required',
+        },
+        {
+          itemId: fixtures.simpleItemId,
+          purchaseOrderLineId: fixtures.simplePoLineId,
+          receivedQuantity: 50,
+          acceptedQuantity: 45,
+          rejectedQuantity: 5,
+          discrepancyType: 'damaged',
+          discrepancyNotes: 'Corner crushed on arrival',
+        },
+      ],
+    });
+
+    const complianceModule = await import('../src/lib/services/compliance');
+    const issues = await complianceModule.listComplianceIssues(fixtures.organizationId);
+    assert.equal(issues.length, 2);
+    assert.equal(issues.filter((issue) => issue.issueType === 'receipt_hold').length, 1);
+    assert.equal(issues.filter((issue) => issue.issueType === 'receipt_discrepancy').length, 1);
   });
 });

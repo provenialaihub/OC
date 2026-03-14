@@ -181,6 +181,29 @@ model InventoryAdjustment {
   @@index([organizationId, itemId, createdAt])
 }
 
+model ComplianceIssue {
+  id                String   @id @default(cuid())
+  organizationId    String
+  locationId        String?
+  issueType         String
+  severity          String
+  status            String   @default("open")
+  relatedEntityType String?
+  relatedEntityId   String?
+  openedByActorType AuditActorType
+  openedByActorId   String?
+  description       String
+  metadataJson      Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location          Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status, severity])
+  @@index([organizationId, issueType, createdAt])
+  @@index([organizationId, relatedEntityType, relatedEntityId])
+}
+
 model Organization {
   id              String                   @id @default(cuid())
   slug            String                   @unique
@@ -211,6 +234,7 @@ model Organization {
   inventoryBalances InventoryBalance[]
   inventoryHolds  InventoryHold[]
   inventoryAdjustments InventoryAdjustment[]
+  complianceIssues ComplianceIssue[]
 }
 
 model Location {
@@ -233,6 +257,7 @@ model Location {
   inventoryBalances InventoryBalance[]
   inventoryHolds  InventoryHold[]
   inventoryAdjustments InventoryAdjustment[]
+  complianceIssues ComplianceIssue[]
 
   @@unique([organizationId, code])
 }
